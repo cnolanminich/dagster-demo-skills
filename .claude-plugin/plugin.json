@@ -1,7 +1,7 @@
 {
   "name": "dagster-demo-skills",
   "description": "Skills for creating Dagster demo projects with integration components, scheduled jobs, custom components, and YAML consolidation.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "cnolanminich"
   }
