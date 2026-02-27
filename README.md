@@ -14,10 +14,11 @@ Claude Code skills for creating Dagster demo projects. Includes skills for scaff
 
 ## Installation
 
-Install as a Claude Code plugin:
+Add the marketplace and install the plugin:
 
-```bash
-claude plugin install cnolanminich/dagster-demo-skills
+```
+/plugin marketplace add cnolanminich/dagster-demo-skills
+/plugin install dagster-demo-skills
 ```
 
 ## Usage
