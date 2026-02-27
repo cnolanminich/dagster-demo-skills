@@ -38,11 +38,8 @@ Before running this skill, ensure:
 ### Important: When to Switch Skills
 
   If you discover the integration package exists but has NO Component class:
-  - Run: `uv run python -c "import dagster_<integration>; print([x for x in dir(dagster_<integration>) if 'Component' in x])"`
-  - If result is `[]`, the integration doesn't have a Component class
-  - **STOP and use the `create-custom-dagster-component` skill instead**
-
-  This skill is ONLY for integrations that have existing Component classes to subclass.
+  - Run: `dg list components --json` and see if there is an integration in the key with that package (for example, `dagster_dbt.DbtProjectComponent` for dbt).
+  - If there is no Component **STOP and use the `create-custom-dagster-component` skill instead**
 
 ## Skill Workflow
 
