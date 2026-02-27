@@ -18,9 +18,9 @@ Subclassing docs: https://docs.dagster.io/guides/build/components/creating-new-c
 
 If the integration package exists but has no Component class:
 ```bash
-uv run python -c "import dagster_<integration>; print([x for x in dir(dagster_<integration>) if 'Component' in x])"
+uv run dg list components --json
 ```
-If result is `[]`, **use the `create-custom-dagster-component` skill instead**.
+Will not have the package listed in the keys, then **use the `create-custom-dagster-component` skill instead**.
 
 ## Determine Component Type
 
