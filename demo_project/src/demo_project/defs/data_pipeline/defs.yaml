@@ -1,0 +1,120 @@
+# =============================================================================
+# Data Pipeline: dlt + Fivetran -> Coalesce -> SFTP Export
+# =============================================================================
+
+# --- Data Ingestion: dlt ---
+# Ingests customers, events, and invoices via dlt pipelines
+type: demo_project.components.dlt_ingestion_component.DltIngestionComponent
+
+attributes:
+  demo_mode: true
+  pipeline_name: "crm_ingestion"
+  destination: "snowflake"
+  dataset_name: "raw_dlt"
+  sources:
+    - name: "customers"
+      source_type: "rest_api"
+      description: "Customer records from CRM REST API via dlt"
+    - name: "events"
+      source_type: "rest_api"
+      description: "User activity events from analytics API via dlt"
+    - name: "invoices"
+      source_type: "sql_database"
+      description: "Invoice records from billing database via dlt"
+---
+# --- Data Ingestion: Fivetran ---
+# Syncs accounts, transactions, and products via Fivetran connectors
+type: demo_project.components.custom_fivetran_component.CustomFivetranComponent
+
+attributes:
+  demo_mode: true
+  # Dummy Fivetran credentials - required for schema validation but ignored in demo mode
+  workspace:
+    account_id: "demo_account_id"
+    api_key: "demo_api_key"
+    api_secret: "demo_api_secret"
+---
+# --- Data Transformation: Coalesce ---
+# Transforms raw data into business-ready models
+type: demo_project.components.coalesce_transform_component.CoalesceTransformComponent
+
+attributes:
+  demo_mode: true
+  environment_id: "demo_env_001"
+  api_token: "demo_token"
+  base_url: "https://app.coalescesoftware.io/api/v1"
+  nodes:
+    - name: "customer_360"
+      description: "Unified customer view combining CRM accounts, dlt customers, and events"
+      upstream_keys:
+        - ["fivetran_raw", "accounts"]
+        - ["dlt_raw", "customers"]
+        - ["dlt_raw", "events"]
+    - name: "transaction_summary"
+      description: "Aggregated transaction metrics from Fivetran transactions and dlt invoices"
+      upstream_keys:
+        - ["fivetran_raw", "transactions"]
+        - ["dlt_raw", "invoices"]
+    - name: "product_performance"
+      description: "Product analytics combining product catalog with transaction data"
+      upstream_keys:
+        - ["fivetran_raw", "products"]
+        - ["coalesce", "transaction_summary"]
+---
+# --- Data Export: SFTP ---
+# Exports transformed data to partner SFTP servers
+type: demo_project.components.sftp_export_component.SftpExportComponent
+
+attributes:
+  demo_mode: true
+  sftp_host: "sftp.demo-partner.com"
+  sftp_port: 22
+  sftp_username: "demo_user"
+  sftp_password: ""
+  sftp_key_path: ""
+  exports:
+    - name: "customer_360_export"
+      format: "csv"
+      remote_path: "/exports/customers"
+      description: "Customer 360 data export to partner SFTP server"
+      upstream_keys:
+        - ["coalesce", "customer_360"]
+    - name: "transaction_summary_export"
+      format: "csv"
+      remote_path: "/exports/finance"
+      description: "Transaction summary export for finance team SFTP drop"
+      upstream_keys:
+        - ["coalesce", "transaction_summary"]
+    - name: "product_performance_export"
+      format: "parquet"
+      remote_path: "/exports/analytics"
+      description: "Product performance data export for analytics SFTP"
+      upstream_keys:
+        - ["coalesce", "product_performance"]
+---
+# --- Schedule: Hourly Ingestion ---
+# Runs all dlt and Fivetran ingestion assets every hour
+type: demo_project.components.scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "hourly_ingestion_job"
+  cron_schedule: "0 * * * *"
+  asset_selection: "group:dlt_ingestion or group:fivetran_ingestion"
+---
+# --- Schedule: Daily Transformation ---
+# Runs Coalesce transformation models daily at 6 AM UTC
+type: demo_project.components.scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "daily_transform_job"
+  cron_schedule: "0 6 * * *"
+  asset_selection: "group:coalesce_transform"
+---
+# --- Schedule: Daily Export ---
+# Exports data to SFTP daily at 8 AM UTC (after transforms)
+type: demo_project.components.scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "daily_export_job"
+  cron_schedule: "0 8 * * *"
+  asset_selection: "group:sftp_export"
