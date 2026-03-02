@@ -68,7 +68,7 @@ Several major abstractions were added between 1.6 and now:
 
 ### 1.3 Removed or De-emphasized Concepts
 
-- **Ops and Graphs**: In 1.6, ops were called "the core unit of computation in Dagster" (with the caveat that they were an "advanced topic"). In the current docs, ops and graphs are almost entirely absent from onboarding materials. They exist only in deep reference pages.
+- **Ops and Graphs**: In 1.6, the ops page stated: *"An op is the core unit of computation in Dagster."* In the current docs, the concepts page states: *"Ops have largely been replaced by assets."* Every ops guide page now carries a banner: *"If you are just getting started with Dagster, we strongly recommend you use assets rather than ops to build your data pipelines."*
 
 - **I/O Managers**: The 1.6 tutorial had a dedicated section (Part 6) on "Saving data with I/O managers." Current onboarding materials do not emphasize I/O managers.
 
@@ -114,6 +114,23 @@ Key evidence:
 
 - **The Getting Started page (1.6)** was a hub with four buttons letting users self-select. Users could go to "Hello Dagster," "Tutorials," "Concepts," or "Dagster University" — implying that multiple learning paths were valid.
 
+**Verbatim examples of 1.6's "recommend but allow" tone:**
+
+> *"An asset is the easiest way to get started with Dagster, and can be used to model assets that should be materialized by Dagster."*
+> — `/concepts/assets/software-defined-assets`
+
+> *"You can group assets using `load_assets_from_package_module` (recommended), or by using the `group_name` argument on each individual asset."*
+> — `/concepts/assets/software-defined-assets` (note the "(recommended)" alongside the alternative)
+
+> *"Dagster also offers ops and jobs, but we recommend starting with assets."*
+> — `/getting-started/hello-dagster`
+
+> *"Behind-the-scenes, the Python function is an op and the asset is modeled on top of it. Ops are an advanced topic that isn't required to get started with Dagster."*
+> — `/concepts/assets/software-defined-assets`
+
+> *"When you define an asset, the same function also produces the op that computes it... In this case, there's no reason to split the logic up into multiple steps. But sometimes you may want to... in this case you may use a graph-backed asset."*
+> — `/guides/dagster/how-assets-relate-to-ops-and-graphs`
+
 **Summary (1.6)**: The docs said *"here's the best way, and here's why, but we understand if you need other approaches."* The opinion was strong but not absolute.
 
 ### 2.2 The Current Approach: "Follow This Path"
@@ -134,7 +151,27 @@ Key evidence:
 
 - **Ops and graphs** are virtually invisible in the onboarding flow. You would have to navigate to deep reference pages to find them.
 
-- **Declarative Automation** is clearly favored over other automation methods. The `@multi_asset_sensor` is deprecated. While schedules and sensors are still documented, the framing suggests Declarative Automation is the forward-looking choice: *"Declarative automation is now marked stable! Dagster now offers a mature, first-class way to automatically materialize assets."*
+- **Declarative Automation** is clearly favored over other automation methods. The `@multi_asset_sensor` is deprecated. While schedules and sensors are still documented, the framing suggests Declarative Automation is the forward-looking choice.
+
+**Verbatim examples of the current docs' prescriptive tone:**
+
+> *"If you are just getting started with Dagster, we strongly recommend you use assets rather than ops to build your data pipelines."*
+> — Banner on **every** ops-related guide page (`/guides/build/ops`, `/guides/build/ops/graphs`, etc.)
+
+> *"Ops have largely been replaced by assets."*
+> — `/getting-started/concepts`
+
+> *"For situations where you are automating execution of assets only, Dagster recommends using Declarative Automation instead."*
+> — `/guides/automate/asset-sensors`
+
+> *"The Components framework and the `dg` CLI are now marked as GA... The APIs are fully supported throughout all parts of the product and remain the recommended defaults for new Dagster projects."*
+> — `/about/changelog`
+
+> *"Unlike the assets file, which was in Python, components provide a low-code interface in YAML."*
+> — `/etl-pipeline-tutorial/transform`
+
+> *"As you develop your Dagster project, it is a good habit to run `dg check` to ensure everything works as expected."*
+> — `/tutorial/assets`
 
 ### 2.3 Opinionation Comparison Table
 
@@ -165,6 +202,49 @@ Key evidence:
 4. Click "Materialize All" in the UI
 
 This was **40 lines of code, zero project structure, immediate feedback**. The user went from nothing to a working asset graph in under 5 minutes. The framing was: *"Look, this is what an asset is, and it already does useful things."*
+
+**The exact Hello Dagster file (1.6) — the first code a new user saw:**
+```python
+import json
+import pandas as pd
+import requests
+from dagster import AssetExecutionContext, MetadataValue, asset
+
+@asset
+def hackernews_top_story_ids():
+    """Get top stories from the HackerNews top stories endpoint."""
+    top_story_ids = requests.get(
+        "https://hacker-news.firebaseio.com/v0/topstories.json"
+    ).json()
+    with open("hackernews_top_story_ids.json", "w") as f:
+        json.dump(top_story_ids[:10], f)
+
+@asset(deps=[hackernews_top_story_ids])
+def hackernews_top_stories(context: AssetExecutionContext):
+    """Get items based on story ids from the HackerNews items endpoint."""
+    with open("hackernews_top_story_ids.json", "r") as f:
+        hackernews_top_story_ids = json.load(f)
+    results = []
+    for item_id in hackernews_top_story_ids:
+        item = requests.get(
+            f"https://hacker-news.firebaseio.com/v0/item/{item_id}.json"
+        ).json()
+        results.append(item)
+    df = pd.DataFrame(results)
+    df.to_csv("hackernews_top_stories.csv")
+    context.add_output_metadata(metadata={
+        "num_records": len(df),
+        "preview": MetadataValue.md(df[["title", "by", "url"]].to_markdown()),
+    })
+```
+
+And the commands to run it:
+```bash
+pip install dagster dagster-webserver pandas
+dagster dev -f hello-dagster.py
+```
+
+That's it. One file, two commands, immediate result.
 
 **Tutorial (1.6):**
 A 7-part sequential tutorial ("New to Dagster? Start here!"):
@@ -198,6 +278,39 @@ Best practices were **embedded within the Guides section**, not given a dedicate
 
 The project structure guide recommended: assets in `assets/` by business domain, resources in `resources/`, sensors in `sensors/`, and "we don't recommend over-abstracting too early; in most cases, one code location should be sufficient."
 
+**The 1.6 recommended project tree (from the fully-featured example):**
+```
+project_fully_featured/
+├── project_fully_featured/
+│   ├── __init__.py
+│   ├── assets/
+│   │   ├── activity_analytics/
+│   │   ├── core/
+│   │   └── recommender/
+│   ├── resources/
+│   ├── sensors/
+│   └── jobs.py
+├── dbt_project/
+├── setup.py
+└── pyproject.toml
+```
+
+**The current auto-generated project tree:**
+```
+my-project/
+├── src/
+│   └── my_project/
+│       ├── __init__.py
+│       ├── definitions.py         ← auto-discovery
+│       └── defs/                  ← all definitions go here
+│           └── __init__.py
+├── tests/
+├── pyproject.toml
+└── uv.lock
+```
+
+The difference is structural: 1.6 showed you a *recommended* layout for an already-complex project. Current gives you an *auto-generated* skeleton for a new project, with the expectation that `dg scaffold` commands will populate it.
+
 ### 3.2 The Current Onboarding Experience
 
 **Entry point:** The Getting Started section directs users to Installation → Quickstart in a linear sequence.
@@ -211,6 +324,63 @@ The project structure guide recommended: assets in `assets/` by business domain,
 6. `dg dev` (run)
 
 This is **more steps, more tooling, more structure from the start**. The user gets a full project scaffold before writing any code. The `dg` CLI validates definitions before running, introducing a compile-check-run cycle.
+
+**The exact quickstart sequence (current) — the first thing a new user does:**
+```bash
+uvx create-dagster@latest project dagster-quickstart
+cd dagster-quickstart
+source .venv/bin/activate
+uv add pandas
+dg scaffold defs dagster.asset assets.py
+```
+
+This generates a project tree:
+```
+dagster-quickstart/
+├── pyproject.toml
+├── src/
+│   └── dagster_quickstart/
+│       ├── __init__.py
+│       ├── definitions.py      ← auto-discovery, "you should not need to modify"
+│       └── defs/
+│           └── assets.py       ← scaffolded by `dg scaffold`
+├── tests/
+└── uv.lock
+```
+
+Then the user fills in the asset:
+```python
+import pandas as pd
+import dagster as dg
+
+@dg.asset
+def processed_data():
+    df = pd.read_csv("src/dagster_quickstart/defs/data/sample_data.csv")
+    df["age_group"] = pd.cut(
+        df["age"], bins=[0, 30, 40, 100], labels=["Young", "Middle", "Senior"]
+    )
+    df.to_csv("src/dagster_quickstart/defs/data/processed_data.csv", index=False)
+    return "Data loaded successfully"
+```
+
+And validates + runs:
+```bash
+dg check defs    # validates before running
+dg dev           # starts the development server
+dg launch --assets "*"   # materializes all assets
+```
+
+Note: The `definitions.py` file uses auto-discovery and is never touched by the user:
+```python
+from pathlib import Path
+from dagster import definitions, load_from_defs_folder
+
+@definitions
+def defs():
+    return load_from_defs_folder(project_root=Path(__file__).parent.parent.parent)
+```
+
+The contrast is stark: 1.6 started with *a concept* (what is an asset?), current starts with *a workflow* (scaffold, write, check, run).
 
 **Dagster Basics Tutorial (current):**
 A progressive tutorial covering:
@@ -384,6 +554,21 @@ For each page, we identified instances where the docs:
 
 These tell users *what to think about* — which abstraction to favor, which pattern to adopt.
 
+**Verbatim 1.6 prescription examples:**
+
+> *"We recommend placing your assets in your `assets/` directory, with subdirectories for different business-relevant groupings."*
+> — `/guides/dagster/recommended-project-structure`
+
+> *"Resources are the recommended way to manage connections to external services and configuration."*
+> — `/tutorial/connecting-to-external-services`
+
+> *"We don't recommend over-abstracting too early; in most cases, one code location should be sufficient."*
+> — `/guides/dagster/recommended-project-structure`
+
+Each was paired with explanation of *why*. And the project structure guide offered an alternative:
+
+> *"If you'd prefer to keep things simple, you can start with a single module and refactor later."*
+
 **In the current docs, prescriptions are primarily operational:**
 - "Use `uvx create-dagster@latest project`"
 - "Use `dg scaffold defs dagster.asset`"
@@ -392,6 +577,23 @@ These tell users *what to think about* — which abstraction to favor, which pat
 - "Use `dg launch --assets '*'`"
 
 These tell users *what to do* — which command to run, which tool to use, which format to write config in.
+
+**Verbatim current prescription examples:**
+
+> *"Use the `dg scaffold defs` command to generate an assets file on the command line."*
+> — `/getting-started/quickstart` (no manual file creation alternative mentioned)
+
+> *"Open your terminal and scaffold a new Dagster project: `uvx create-dagster@latest project dagster-quickstart`"*
+> — `/getting-started/quickstart` (`create-dagster` is the only path shown)
+
+> *"In the terminal, navigate to your project's root directory and run: `dg dev`"*
+> — `/getting-started/quickstart` (older `dagster dev` not mentioned)
+
+> *"We recommend beginning new components by designing the interface."*
+> — `/guides/build/components`
+
+> *"We recommend using asset observations when reporting events from external systems in Dagster instead of asset materializations to avoid consuming credits."*
+> — `/guides/build/assets`
 
 ### 5.5 Deprecation Language
 
@@ -402,6 +604,24 @@ These tell users *what to do* — which command to run, which tool to use, which
 | Discouraged patterns | 0 | Ops for new projects, asset sensors for automation, unit testing external system logic, hard-coding credentials |
 
 The 1.6 docs contained **zero** deprecation or discouragement language. Even ops were described as "the core unit of computation" — just placed under an Advanced section. The current docs actively deprecate multiple APIs and discourage several patterns.
+
+**Verbatim deprecation examples from current docs:**
+
+> *"AutoMaterializePolicy, AutoMaterializeRule, and the auto_materialize_policy arguments to @asset and AssetSpec have been marked as deprecated, and the new AutomationCondition API and automation_condition argument should be used instead."*
+> — `/migration/upgrading` (1.8.0 release notes)
+
+> *"SourceAsset is deprecated, in favor of AssetSpec. You can now use AssetSpecs in any of the places you could previously use SourceAssets."*
+> — `/migration/upgrading` (1.8.0 release notes)
+
+> *"The experimental @multi_asset_sensor has been marked as deprecated, but will not be removed from the codebase until Dagster 2.0 is released."*
+> — `/migration/upgrading` (1.9.0 release notes)
+
+> *"FreshnessPolicy is now deprecated. For monitoring freshness, use freshness checks instead."*
+> — `/migration/upgrading` (1.7.0 release notes)
+
+Compare with how 1.6 described ops:
+> *"An op is the core unit of computation in Dagster. Individual ops should perform relatively simple tasks."*
+> — `/concepts/ops-jobs-graphs/ops` (no deprecation, just positioning as "advanced")
 
 ---
 
@@ -461,6 +681,40 @@ In 1.6, code density was concentrated in the concepts layer (the SDA page alone 
 
 This was a **reference encyclopedia** — "here are all the patterns, pick what fits."
 
+**Concrete 1.6 example — four different ways to declare dependencies on the same SDA page:**
+
+Pattern A — deps list:
+```python
+@asset(deps=[sugary_cereals])
+def shopping_list() -> None:
+    execute_query("CREATE TABLE shopping_list AS SELECT * FROM sugary_cereals")
+```
+
+Pattern B — managed-loading (function argument):
+```python
+@asset
+def downstream_asset(upstream_asset):
+    return upstream_asset + [4]
+```
+
+Pattern C — explicit `AssetIn`:
+```python
+@asset(ins={"upstream": AssetIn("upstream_asset")})
+def downstream_asset(upstream):
+    return upstream + [4]
+```
+
+Pattern D — `SourceAsset` for external data:
+```python
+my_source_asset = SourceAsset(key=AssetKey("a_source_asset"))
+
+@asset(deps=[my_source_asset])
+def my_derived_asset():
+    return execute_query("SELECT * from a_source_asset").as_list() + [4]
+```
+
+All four patterns were shown on the same page, giving users the power to choose.
+
 **In the current docs**, the highest-code-density pages show *one way* to accomplish each thing:
 - One way to scaffold (`dg scaffold defs`)
 - One way to define assets (`@dg.asset`)
@@ -468,6 +722,81 @@ This was a **reference encyclopedia** — "here are all the patterns, pick what 
 - One way to automate (`AutomationCondition`)
 
 This is a **recipe book** — "here's the recipe, follow the steps."
+
+**Concrete current example — one way to define and configure a dbt component:**
+
+Step 1: scaffold with a CLI command:
+```bash
+dg scaffold defs dagster_dbt.DbtProjectComponent transform --project-path transform/jdbt
+```
+
+Step 2: configure via YAML (the only mechanism shown):
+```yaml
+type: dagster_dbt.DbtProjectComponent
+
+attributes:
+  project: '{{ context.project_root }}/transform/jdbt'
+  translation:
+    key: "target/main/{{ node.name }}"
+```
+
+Step 3: validate + run:
+```bash
+dg check defs
+dg dev
+```
+
+The older `@dbt_assets` Python decorator approach is not mentioned on this tutorial page.
+
+**Concrete current example — the only automation pattern shown in the tutorial:**
+
+```python
+import dagster as dg
+
+@dg.asset(
+    deps=["upstream"],
+    automation_condition=dg.AutomationCondition.on_cron("@hourly"),
+)
+def hourly_asset() -> None: ...
+```
+
+Sensors, custom cron logic, and the older `AutoMaterializePolicy` are not mentioned. The recipe is singular.
+
+**Concrete current example — the Component class that replaces hand-coded assets:**
+
+In the basics tutorial, three nearly-identical hand-coded Python asset functions get replaced by one Component:
+
+```python
+class Tutorial(dg.Component, dg.Model, dg.Resolvable):
+    duckdb_database: str
+    etl_steps: list[ETL]
+
+    def build_defs(self, context: dg.ComponentLoadContext) -> dg.Definitions:
+        _etl_assets = []
+        for etl in self.etl_steps:
+            @dg.asset(name=etl.table)
+            def _table(duckdb: DuckDBResource):
+                with duckdb.get_connection() as conn:
+                    conn.execute(f"create or replace table {etl.table} as ...")
+            _etl_assets.append(_table)
+        return dg.Definitions(assets=_etl_assets, resources={...})
+```
+
+Configured via YAML:
+```yaml
+type: dagster_tutorial.components.tutorial.Tutorial
+attributes:
+  duckdb_database: /tmp/jaffle_platform.duckdb
+  etl_steps:
+    - url_path: https://...raw_customers.csv
+      table: customers
+    - url_path: https://...raw_orders.csv
+      table: orders
+    - url_path: https://...raw_payments.csv
+      table: payments
+```
+
+This is positioned as the natural evolution: *"In this tutorial, you will learn about core Dagster features and use them to build a working data pipeline. We will start with the fundamental concepts and progress to higher level abstractions that showcase the power of Dagster."* (Basics Tutorial intro)
 
 ---
 
