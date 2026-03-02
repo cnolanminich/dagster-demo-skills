@@ -21,7 +21,7 @@ Between Dagster 1.6 and the current release (1.12.17, as of February 27, 2026), 
 | **Automation model** | Schedules + Sensors + Auto-Materialize | Schedules + Sensors + Declarative Automation (GA) |
 | **Ops/Graphs positioning** | "Advanced topic, not needed to start" | Virtually absent from onboarding |
 | **Package management** | `pip install` | `uv` (recommended) or `pip` |
-| **Overall opinionation** | Moderate-high (asset-first but options shown) | Very high (single prescribed path) |
+| **Overall opinionation** | Moderate-high (asset-first but options shown) | Very high in onboarding (single prescribed path); moderate in mini-examples (trade-offs shown) |
 
 ---
 
@@ -478,7 +478,7 @@ The 1.6 approach was **concept-first**: understand what an asset is, then learn 
 
 1. **Higher initial complexity**: The 1.6 "single file" quickstart was arguably more accessible. Current onboarding requires understanding `create-dagster`, `dg` CLI subcommands, project structure conventions, and auto-discovery before writing any data logic.
 
-2. **Reduced flexibility signaling**: By removing visible alternatives from onboarding, the docs may make users with non-standard use cases (non-asset workloads, task-based workflows, etc.) feel unsupported, even if those features still exist.
+2. **Reduced flexibility signaling**: By removing visible alternatives from onboarding, the docs may make users with non-standard use cases (non-asset workloads, task-based workflows, etc.) feel unsupported, even if those features still exist. **Partial counterbalance (see Part 7):** The 9 mini-examples explicitly present multiple approaches with trade-offs at the *operational* level (how to backfill, how to parallelize, partitions vs config). However, this flexibility lives outside the onboarding funnel — users must already be building before they discover it.
 
 3. **YAML configuration trade-offs**: The shift from pure Python (`Definitions(...)`) to YAML (`defs.yaml`) introduces a different kind of complexity. YAML with Jinja2 templating can become its own debugging challenge.
 
@@ -492,11 +492,15 @@ The 1.6 approach was **concept-first**: understand what an asset is, then learn 
 Dagster 1.6:    "Assets are the right way. Here's why. But we support other patterns."
                 Opinionation: ████████░░ (8/10)
 
-Current:        "Use our toolchain. Follow our structure. Build with Components."
-                Opinionation: ██████████ (10/10 in onboarding, 7/10 in reference docs)
+Current:        Varies by doc layer:
+                Onboarding/Tutorials:  ██████████ (10/10 — single prescribed path)
+                Full Pipeline Examples: █████████░ (9/10 — one way per tutorial)
+                Reference Architectures:████████░░ (8/10 — prescribe tech stacks)
+                Mini Examples:          █████░░░░░ (5/10 — multiple approaches with trade-offs)
+                Reference Docs:         ███████░░░ (7/10 — options documented, defaults noted)
 ```
 
-The docs have gone from **strongly opinionated with acknowledged alternatives** to **prescriptive with a single path in onboarding**. This is a deliberate strategy — reducing choices reduces confusion for new users — but it changes the character of the documentation from "here's how to think about data engineering" to "here's how to use Dagster."
+The docs have gone from **strongly opinionated with acknowledged alternatives** to a **gradient**: highly prescriptive in onboarding and tutorials, but with a deliberate "flexibility layer" in the mini-examples (see Part 7). The key difference from 1.6 is *where* flexibility appears. In 1.6, alternatives were presented at the foundational level (assets vs ops, different dependency patterns). In the current docs, the *what to build with* is prescribed (Components, `dg` CLI, `@dg.asset`), while the *how to tune it* allows choice (backfill strategies, parallelism approaches, partitions vs config). This is a deliberate strategy — reducing foundational choices reduces confusion for new users — but it changes the character of the documentation from "here's how to think about data engineering" to "here's how to use Dagster (and here are some operational knobs once you're using it)."
 
 ---
 
@@ -522,8 +526,8 @@ For each page, we identified instances where the docs:
 | **Offer a single path** (no alternatives) | 0 (alternatives always noted) | ~19 |
 | **Deprecate/discourage** | 0 | ~5 |
 | **Present a default choice** | 0 (implicit only) | ~14 |
-| **Offer alternatives** | 13 | ~0 (in onboarding) |
-| **Present choices without strong opinion** | 5 | ~0 (in onboarding) |
+| **Offer alternatives** | 13 | ~0 in onboarding; ~15-20 in mini-examples (see Part 7) |
+| **Present choices without strong opinion** | 5 | ~0 in onboarding; ~9 in mini-examples (see Part 7) |
 | **TOTAL prescriptive instances** | **37** | **~100** |
 
 **The current docs contain roughly 2.7x more prescriptive guidance instances** across a comparable set of pages, even before normalizing for the fact that current docs also contain more pages overall.
@@ -542,7 +546,7 @@ For each page, we identified instances where the docs:
 
 **1.6 balanced prescriptions with alternatives.** For 37 prescriptive instances, there were 13 instances of "you can also" and 5 instances of neutral multi-option presentation. That's a **2.1:1 prescription-to-alternative ratio**.
 
-**Current docs offer essentially zero alternatives in onboarding.** For ~100 prescriptive instances, alternatives appear only in deep reference pages (e.g., `pip` as a fallback for `uv`, `--format python` as an alternative to YAML components). In the tutorials and getting started flow, the ratio is effectively **infinite** — prescription without acknowledged alternatives.
+**Current docs offer essentially zero alternatives in onboarding.** For ~100 prescriptive instances in Getting Started, Basics Tutorial, and ETL Tutorial, alternatives appear only in deep reference pages (e.g., `pip` as a fallback for `uv`, `--format python` as an alternative to YAML components). In the tutorials and getting started flow, the ratio is effectively **infinite** — prescription without acknowledged alternatives. **However (see Part 7):** The 9 mini-examples are a notable exception — they explicitly present 2-3 approaches with trade-offs for operational decisions (backfill strategies, parallelism, partitions vs config). This creates a two-tier prescription model: foundational choices (what tools, what abstractions) are prescribed; operational choices (how to tune, how to scale) allow flexibility. The combined picture is closer to a **5:1 prescription-to-alternative ratio** across the full doc surface, though a new user following the onboarding funnel would never encounter the alternatives until reaching mini-examples.
 
 ### 5.4 Nature of Prescriptive Guidance
 
@@ -635,7 +639,9 @@ Compare with how 1.6 described ops:
 | **Code snippets** (fragments showing a concept) | 49 | ~37 | -24% |
 | **CLI commands** | 13 | ~42 | **+223%** |
 | **Configuration examples** (YAML, directory trees) | 5 | ~20 | **+300%** |
-| **GRAND TOTAL** | **72** | **~126** | **+75%** |
+| **GRAND TOTAL (core pages)** | **72** | **~126** | **+75%** |
+
+**Note (updated per Part 7):** The counts above cover the 18 core pages (Getting Started, Basics Tutorial, ETL Tutorial, Concepts, Guides). They do **not** include the 9 full-pipeline tutorial examples, which collectively contain an estimated **~200+ additional code blocks** (Python, YAML, CLI, config) across ~36 sub-pages. Including these brings the current docs' total hands-on code surface to **~326+ code blocks** — roughly **4.5x** the 1.6 total. The full pipeline examples are the single largest source of runnable code in the current docs and represent a category that had no equivalent in 1.6.
 
 ### 6.2 Analysis of the Shift
 
