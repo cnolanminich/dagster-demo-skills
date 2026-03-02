@@ -970,6 +970,250 @@ The examples section fits into the analysis framework as follows:
 
 ---
 
+## Part 8: Dagster Cloud vs. Dagster+ Documentation
+
+The commercial offering's documentation underwent its own transformation — rebranded from "Dagster Cloud" to "Dagster+" in April 2024 (coinciding with Dagster 1.7), with significant structural, feature, and philosophical changes that both mirror and diverge from the OSS docs evolution analyzed in Parts 1-7.
+
+### 8.1 The Rebrand: Dagster Cloud → Dagster+
+
+**Timeline:**
+- **August 2022**: Dagster Cloud originally launched
+- **April 17, 2024**: Rebranded as **Dagster+** ("the next evolution of Dagster Cloud"), announced alongside Dagster 1.7
+- The company (Elementl) simultaneously renamed itself to **Dagster Labs**
+
+The rebrand was not cosmetic — it accompanied four new capabilities: a new **Asset Catalog** (search-first with column lineage), expanded **data quality** features (anomaly detection, freshness, alerting), improved **Branch Deployments** with Change Tracking, and **Insights** GA for cost management across tools like Snowflake, Fivetran, and OpenAI.
+
+### 8.2 Documentation Structure Comparison
+
+**Dagster Cloud in 1.6** had **~47-50 pages** organized into 7 top-level sections:
+
+```
+Cloud
+  ├── Getting Started
+  ├── Deployment Types
+  │   ├── Serverless
+  │   └── Hybrid
+  │       ├── Agents Overview
+  │       ├── Local Agent
+  │       ├── Docker Agent (setup + config ref)
+  │       ├── Kubernetes Agent (setup + config ref)
+  │       └── Amazon ECS Agent (5 sub-pages: new VPC, existing VPC, manual, config ref, CloudFormation upgrade)
+  ├── Organization Settings (tokens)
+  ├── Authentication & Users
+  │   ├── User Management
+  │   ├── Teams (Enterprise)
+  │   ├── Roles & Permissions
+  │   └── SSO: Azure AD, Google Workspace, Okta, OneLogin, PingOne + SCIM
+  ├── Managing Deployments
+  │   ├── Alerts (single page, 5 alert types)
+  │   ├── Environment Variables (UI + agent methods)
+  │   ├── Code Locations
+  │   ├── dagster_cloud.yaml Reference
+  │   ├── Deployment Settings
+  │   └── Branch Deployments (overview + GitHub, GitLab, CLI)
+  ├── Insights (overview + Snowflake, Snowflake+dbt, export)
+  └── dagster-cloud CLI
+```
+
+**Dagster+ in current docs** has **~50-70 pages** across a restructured, more distributed layout:
+
+```
+Dagster+  (also under Deployment → Dagster+)
+  ├── About Dagster+
+  ├── Getting Started
+  ├── Deployment
+  │   ├── Serverless (runtime, CI/CD, settings)
+  │   ├── Hybrid
+  │   │   ├── Architecture Overview
+  │   │   ├── Amazon ECS Agent (setup + config ref + CloudFormation)
+  │   │   ├── Docker Agent (setup + config ref)
+  │   │   ├── Kubernetes Agent (setup + config ref)
+  │   │   ├── Microsoft Azure Agent  ← NEW
+  │   │   └── Multiple Agents + Queue Routing
+  │   └── IP Addresses
+  ├── Deploying Code
+  │   ├── Branch Deployments (GitHub, GitLab, CLI, multiple deployments)
+  │   ├── Full Deployments (settings, management)
+  │   └── CI/CD Configuration (GitHub Actions, GitLab CI, custom)
+  ├── Management
+  │   ├── Environment Variables (UI, agent config, built-in vars)
+  │   ├── Tokens
+  │   └── Deployment Settings Reference
+  ├── Authentication & Access Control
+  │   ├── SSO: Google, Okta, Azure AD/Entra ID, PingOne, GitHub  ← GitHub SSO new
+  │   ├── SCIM: Okta, Microsoft Entra ID
+  │   ├── RBAC (overview, custom roles [Pro], per-deployment permissions)
+  │   ├── Teams (Pro)
+  │   ├── Service Users (Pro)  ← NEW
+  │   └── Audit Logs (Pro)  ← NEW
+  ├── Features
+  │   ├── Insights (overview, BigQuery, Snowflake, custom metrics, export)
+  │   ├── Asset Catalog (catalog views, search)  ← NEW
+  │   └── Asset Health Status  ← NEW
+  ├── Alerts (email, Slack, Microsoft Teams [NEW], PagerDuty [Pro])
+  │   ├── Alert Policy Types (expanded: asset health, metric monitors, code location errors)
+  │   └── YAML Alert Configuration  ← NEW
+  ├── Migration
+  │   ├── OSS → Dagster+  ← NEW
+  │   └── Serverless → Hybrid  ← NEW
+  └── CLI
+      ├── dg plus deploy
+      ├── dg plus deploy configure  ← NEW
+      ├── dg plus login
+      └── dg scaffold github-actions  ← NEW
+```
+
+### 8.3 What Changed: Feature-by-Feature
+
+| Feature Area | 1.6 (Dagster Cloud) | Current (Dagster+) | Change |
+|---|---|---|---|
+| **Page count** | ~47-50 | ~50-70 | +30-40% |
+| **Deployment models** | Serverless + Hybrid | Serverless + Hybrid (same) | Unchanged |
+| **Agent types** | ECS, Docker, K8s, Local | ECS, Docker, K8s, **Azure** (Local demoted) | +1 agent |
+| **SSO providers** | Azure AD, Google, Okta, OneLogin, PingOne | Azure AD/Entra ID, Google, Okta, PingOne, **GitHub** | +1, -1 (OneLogin removed) |
+| **SCIM** | Okta only | Okta + **Microsoft Entra ID** | +1 |
+| **Alerts** | Single page, 5 alert types, 2 channels (Slack, email) | Multi-page, **8+ alert types**, **4 channels** (+Microsoft Teams, +PagerDuty) | 3x expansion |
+| **Alert configuration** | UI only | UI + **YAML config** + `dagster-cloud` CLI sync | +2 methods |
+| **Insights** | 4 pages (Snowflake-focused) | 5-6 pages (+**BigQuery**, +**custom metrics**, cost tracking) | Expanded |
+| **Asset Catalog** | Did not exist | First-class feature (catalog views, search, column lineage) | **Entirely new** |
+| **Asset Health** | Did not exist | Combined health from materialization + freshness + checks | **Entirely new** |
+| **Branch deployments** | 3 pages (overview, GitHub, GitLab) | 4-5 pages (+**multiple deployments**, +Change Tracking) | Enhanced |
+| **RBAC** | Basic (5 default roles, Enterprise gating) | Enhanced (**custom roles** [Pro], per-code-location permissions) | Significant upgrade |
+| **Service users** | Did not exist | Non-human API auth accounts (Pro) | **Entirely new** |
+| **Audit logs** | Did not exist | Track and attribute changes (Pro) | **Entirely new** |
+| **Migration guides** | None | OSS → Dagster+, Serverless → Hybrid | **Entirely new** |
+| **CI/CD tooling** | `dagster-cloud ci` CLI + GitHub/GitLab guides | `dg scaffold github-actions`, `dg plus deploy configure` | More automated |
+| **Billing/pricing** | Not documented | Referenced but still on dagster.io/pricing (not in docs) | Minimal change |
+| **EU region** | Not available | `dg plus login --region eu` | **New** |
+| **Compass (AI)** | Did not exist | AI-powered data answers for stakeholders | **Entirely new** |
+
+### 8.4 Opinionation in Cloud/+ Documentation
+
+This is where the Dagster Cloud/+ docs **diverge notably from the OSS docs pattern** described in Parts 1-7.
+
+**1.6 Dagster Cloud was moderately opinionated (similar to OSS):**
+- Serverless was clearly recommended as the default: *"Ideal for those wanting quick adoption without computational demands or infrastructure focus."*
+- But Hybrid was presented as a legitimate alternative with clear criteria: *"Consider Hybrid deployment instead if you need substantial computational resources, handle datasets too large for memory, require multi-node computation distribution, or prefer not adding Dagster Labs as a data processor."*
+- Agent type selection was genuinely flexible — ECS, Docker, K8s, and Local were presented as peers.
+- Branch deployments were prescribed as THE CI/CD model, but with GitHub, GitLab, and CLI as three equal paths.
+
+**Current Dagster+ docs are more opinionated, but not as drastically as OSS:**
+- *"If you're not sure which agent to use, Dagster recommends the Dagster+ Kubernetes agent in most cases."* — This is a new recommendation that 1.6 did not have.
+- *"Dagster strongly recommends creating a dedicated branch deployment agent"* — Stronger language than 1.6.
+- Components and `dg` CLI are now described as *"the recommended, production-ready defaults for new Dagster projects"* — this flows from OSS into the cloud onboarding.
+- GitHub Actions is now auto-scaffolded (`dg scaffold github-actions`), making it the de facto default over GitLab or custom CI.
+
+**However**, the cloud docs maintain more genuine optionality than OSS tutorials because deployment infrastructure inherently requires choice — you can't prescribe a single agent type for all environments. The Serverless vs. Hybrid decision is still a real fork, and within Hybrid, each agent type has a legitimate use case tied to existing infrastructure.
+
+**Opinionation comparison:**
+
+```
+                            1.6 Cloud    Current Dagster+
+Deployment model choice:    ██████░░░░   ██████░░░░  (genuine choice, both well-documented)
+Agent type selection:       █████░░░░░   ███████░░░  (K8s now recommended; was neutral)
+CI/CD setup:                ██████░░░░   ████████░░  (GitHub Actions auto-scaffolded)
+Project structure:          ██████░░░░   █████████░  (follows OSS prescriptive shift)
+Monitoring/Alerting:        █████░░░░░   ███████░░░  (more alert types, but more channels)
+Overall:                    ██████░░░░   ███████░░░  (6/10 → 7/10)
+```
+
+The gap is smaller than in OSS (6→7 vs. 8→10 in onboarding). This is because infrastructure documentation must accommodate different environments — you can't tell a Docker-only shop to use Kubernetes.
+
+### 8.5 Onboarding: Cloud Getting Started vs. Dagster+ Getting Started
+
+**1.6 Cloud onboarding** followed a 5-step linear flow:
+1. Create account and organization
+2. Select deployment type (Serverless vs. Hybrid)
+3. Deploy code (path diverges by deployment type)
+4. Configure CI/CD (Hybrid only)
+5. Set up environment variables
+
+Next steps suggested: invite team, configure auth, set up monitoring, learn branch deployments. Users had a clear **fork** at step 2 — Serverless skipped step 4 entirely.
+
+**Current Dagster+ onboarding** is more streamlined:
+- Serverless: *"follow the Dagster+ onboarding to add a new project. You will be guided through the steps to create a Git repository and set up the necessary CI/CD actions."* Users can *"select an example project or import an existing dbt project"* if they don't have code.
+- Hybrid: *"follow the steps in the Dagster+ Hybrid documentation to install a Dagster+ Hybrid agent and set up CI/CD."*
+- A new Serverless Quickstart page provides a dedicated walkthrough: sign up → create project → make changes via branch deployments → merge to main for production deployment.
+- The account is *"automatically enrolled in a trial"* — reducing friction.
+
+**Key onboarding difference:** 1.6 had a single "Getting Started" page that covered both paths in one flow. The current docs have separated Serverless and Hybrid into distinct paths with dedicated pages, plus added a Serverless Quickstart that mirrors the OSS quickstart's prescriptive style.
+
+### 8.6 New Dagster+ Capabilities Not in 1.6
+
+Several entirely new product capabilities are documented in the current Dagster+ docs:
+
+**1. Asset Catalog** — A search-first experience with catalog views, column lineage, and metadata search. *"A powerful search-first experience that builds off of Dagster's best-in-class lineage graph."* No equivalent in 1.6.
+
+**2. Asset Health Status** — A unified health metric combining materialization state, freshness tracking, and asset check results into a single status indicator. No equivalent in 1.6.
+
+**3. Expanded Alert Types** — 1.6 had 5 alert types (run failure, asset materialization, schedule/sensor, code location error, agent downtime). Current docs add: `ASSET_HEALTH_DEGRADED`, `ASSET_HEALTH_WARNING`, `ASSET_HEALTH_HEALTHY`, `METRIC_MONITOR_ALERT`, `CODE_LOCATION_ERROR` (expanded). Microsoft Teams is a new notification channel. YAML-based alert configuration is new.
+
+**4. Insights Expansion** — 1.6 Insights focused on Snowflake cost tracking. Current Insights adds BigQuery, custom metrics from asset metadata, credit usage tracking per asset, and a Job Insights tab for per-job metric breakdowns.
+
+**5. Service Users** — Non-human API authentication accounts for CI/CD and service-to-service integration. Unlimited on Pro. Did not exist in 1.6.
+
+**6. Audit Logs** — Track and attribute all changes to the Dagster+ deployment. Pro only. Did not exist in 1.6.
+
+**7. Custom RBAC Roles** — Beyond the 5 default roles (Viewer, Launcher, Editor, Admin, Org Admin), Pro users can now create custom roles with granular permissions.
+
+**8. Migration Guides** — Two new guides: OSS → Dagster+ and Serverless → Hybrid. 1.6 had no migration documentation.
+
+**9. Compass (AI)** — An AI-powered feature that *"turns warehouse data into instant, trustworthy answers for every stakeholder."* Entirely new product capability.
+
+**10. `dg plus` CLI** — Replaces parts of `dagster-cloud` CLI with `dg plus deploy`, `dg plus deploy configure`, and `dg plus login` (with EU region support). `dg scaffold github-actions` auto-generates CI/CD workflows.
+
+### 8.7 Best Practices: Embedded vs. Explicit
+
+**1.6 Cloud docs embedded best practices within individual pages** with no dedicated best practices section:
+- *"Serverless works best for orchestration-heavy workloads, particularly those integrating third-party SaaS products like cloud data warehouses."*
+- *"Only use multiple agents of the same type"* (e.g., multiple K8s agents, not mixed types)
+- *"Server TTL"* to reduce costs by auto-shutting down idle servers
+- Recommended dedicated branch deployment agents separate from production
+- No reference architecture for cloud deployments
+
+**Current Dagster+ docs are more explicit about best practices:**
+- Verbatim resource sizing guidance: *"Agent container — start at 0.25 vCPU core and 1 GB RAM... Code server container — budget for imports, plus the definition graph... For runs: 4 vCPU cores, 8-16 GB of RAM."*
+- Security model documented: *"SOC 2 Type II certified... encrypting data at rest (AES 256) and in transit (TLS 1.2+). All user code runs within your environment, in isolation from Dagster system code."*
+- Environment variable scoping guidance (Full vs. Branch vs. Local)
+- K8s recommended as the default agent type (new recommendation)
+- HIPAA, SOC 2 Type II, and GDPR compliance noted
+
+The shift is from **implicit best practices you'd derive from reading multiple pages** to **explicit sizing guides, security models, and compliance certifications** that a platform team can reference directly.
+
+### 8.8 Pricing Model Evolution
+
+| Dimension | 1.6 (Dagster Cloud) | Current (Dagster+) |
+|---|---|---|
+| **Documented in docs?** | No dedicated page | Referenced but detailed pricing lives on dagster.io/pricing |
+| **Tier names** | Not documented (Enterprise referenced) | **Solo**, **Starter** (formerly Teams), **Pro** |
+| **Credit model** | Not documented in detail | 1 credit = 1 asset materialization + 1 op execution; `@asset` costs ~2 credits |
+| **Free tier** | Not documented | Solo: 7,500 free credits/month |
+| **Overage** | Not documented | $0.03/credit; *"Dagster+ will not shut down your pipelines due to usage"* |
+| **Compute charges** | Not documented | Serverless: per-minute compute; Hybrid: no compute charge |
+| **Enterprise features** | Multiple deployments, Teams, Viewer/Launcher roles | Pro: Custom roles, SCIM, audit logs, PagerDuty, service users, per-code-location permissions |
+
+The credit model documentation is notably **not in the official docs** — it's on the marketing site and in GitHub Discussions. This is one area where the docs are **less transparent** than users expect, and community feedback has noted the pricing as confusing.
+
+### 8.9 How Dagster+ Docs Differ from the OSS Docs Pattern
+
+The central finding from this analysis is that **the Dagster+ docs did not undergo the same dramatic philosophical shift as the OSS docs:**
+
+| Dimension | OSS Docs Change (Parts 1-7) | Dagster+ Docs Change |
+|---|---|---|
+| **Opinionation increase** | Dramatic (8/10 → 10/10 in onboarding) | Moderate (6/10 → 7/10) |
+| **Alternative elimination** | Severe (near-zero in onboarding) | Mild (still presents Serverless vs. Hybrid, multiple agents) |
+| **New abstractions** | Components, `dg` CLI, `defs.yaml` (paradigm shift) | `dg plus` CLI, auto-scaffolded CI/CD (tooling evolution) |
+| **Documentation restructuring** | Complete rewrite (Docusaurus, linear funnel) | Restructured URL paths, but similar topic organization |
+| **Best practices delivery** | Embedded in scaffolds (implicit) | More explicit (sizing guides, security docs) |
+| **Deprecation language** | Aggressive (5+ APIs deprecated) | Minimal (CLI commands renamed, features added) |
+| **Page count change** | More pages, narrower topics | Similar page count, broader coverage |
+
+**Why the difference?** Infrastructure documentation inherently resists the "single path" approach because users have different environments. You can prescribe `@dg.asset` as the one way to define an asset, but you can't prescribe Kubernetes as the one way to run an agent — Docker shops, ECS shops, and Azure shops all need their path documented.
+
+The result is that Dagster+ docs occupy a **middle ground**: they've adopted the OSS docs' new tooling (`dg` CLI, Components, project structure) and increased recommendations (K8s as default agent), but they preserve the 1.6-era pattern of presenting genuine alternatives where infrastructure forces it. A user reading only the Dagster+ docs would get a less prescriptive experience than someone reading only the OSS tutorials.
+
+---
+
 ## Appendix A: Key Feature Timeline (1.6 → Current)
 
 | Version | Codename | Date | Key Changes |
