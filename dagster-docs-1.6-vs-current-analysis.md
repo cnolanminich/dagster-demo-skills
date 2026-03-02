@@ -1,4 +1,4 @@
-# Dagster Documentation Analysis: 1.6 Release vs. Current (1.11+)
+# Dagster Documentation Analysis: 1.6 Release vs. Current (1.12)
 
 *Analysis Date: March 2, 2026*
 
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-Between Dagster 1.6 and the current release (1.11+), the documentation has undergone a **fundamental transformation** — not just a cosmetic refresh, but a philosophical and structural overhaul that reflects Dagster's evolution from a flexible orchestration framework into a highly opinionated data platform with prescribed workflows, new abstractions (Components, `dg` CLI), and a dramatically narrower "happy path" for new users.
+Between Dagster 1.6 and the current release (1.12.17, as of February 27, 2026), the documentation has undergone a **fundamental transformation** — not just a cosmetic refresh, but a philosophical and structural overhaul that reflects Dagster's evolution from a flexible orchestration framework into a highly opinionated data platform with prescribed workflows, new abstractions (Components, `dg` CLI), and a dramatically narrower "happy path" for new users.
 
 **The key shifts:**
 
@@ -327,6 +327,147 @@ Current:        "Use our toolchain. Follow our structure. Build with Components.
 ```
 
 The docs have gone from **strongly opinionated with acknowledged alternatives** to **prescriptive with a single path in onboarding**. This is a deliberate strategy — reducing choices reduces confusion for new users — but it changes the character of the documentation from "here's how to think about data engineering" to "here's how to use Dagster."
+
+---
+
+## Part 5: Prescriptive Guidance Frequency Comparison
+
+To go beyond qualitative assessment, we systematically cataloged every instance of prescriptive guidance across comparable pages in both doc versions. This analysis examines Getting Started, Tutorials, key Concepts pages, and Guides — the pages a new or intermediate user would encounter.
+
+### 5.1 Methodology
+
+For each page, we identified instances where the docs:
+- **Prescribe a specific approach**: "you should", "we recommend", "the best way", "the easiest way"
+- **Offer a single path**: Step-by-step instructions with no alternatives mentioned
+- **Deprecate/discourage**: "deprecated", "legacy", "avoid", "instead use"
+- **Present a default choice**: One option marked as default or recommended
+- **Offer alternatives** (1.6 only): "you can also", "alternatively", "another approach"
+- **Present choices without strong opinion** (1.6 only): Multiple options, no clear favorite
+
+### 5.2 Aggregate Prescriptive Guidance Counts
+
+| Category | Dagster 1.6 (15 pages) | Current (18 pages) |
+|----------|------------------------|-------------------|
+| **Prescribe a specific approach** | 37 | ~62 |
+| **Offer a single path** (no alternatives) | 0 (alternatives always noted) | ~19 |
+| **Deprecate/discourage** | 0 | ~5 |
+| **Present a default choice** | 0 (implicit only) | ~14 |
+| **Offer alternatives** | 13 | ~0 (in onboarding) |
+| **Present choices without strong opinion** | 5 | ~0 (in onboarding) |
+| **TOTAL prescriptive instances** | **37** | **~100** |
+
+**The current docs contain roughly 2.7x more prescriptive guidance instances** across a comparable set of pages, even before normalizing for the fact that current docs also contain more pages overall.
+
+### 5.3 Key Differences in Prescriptive Language
+
+**Dagster 1.6 prescriptive language was concentrated in two areas:**
+1. **Project structure guide** (11 of 37 instances) — the most opinionated single page, repeatedly using "we recommend" for directory layout
+2. **Assets concept page** (4 instances) — recommending `@asset` as "the easiest way" and `load_assets_from_package_module` as the "(recommended)" grouping approach
+
+**Current docs prescriptive language is spread across every page:**
+- Every onboarding page has 5-9 prescriptive instances
+- The ETL tutorial pages each have 5-7 instances
+- The guides carry 6-9 instances per page
+- The best practices hub alone has 9 instances
+
+**1.6 balanced prescriptions with alternatives.** For 37 prescriptive instances, there were 13 instances of "you can also" and 5 instances of neutral multi-option presentation. That's a **2.1:1 prescription-to-alternative ratio**.
+
+**Current docs offer essentially zero alternatives in onboarding.** For ~100 prescriptive instances, alternatives appear only in deep reference pages (e.g., `pip` as a fallback for `uv`, `--format python` as an alternative to YAML components). In the tutorials and getting started flow, the ratio is effectively **infinite** — prescription without acknowledged alternatives.
+
+### 5.4 Nature of Prescriptive Guidance
+
+**In 1.6, prescriptions were primarily conceptual:**
+- "Assets are the main way to create data pipelines"
+- "We recommend starting with assets and not worrying about ops"
+- "Resources are the recommended way to manage connections"
+- "We don't recommend over-abstracting too early"
+
+These tell users *what to think about* — which abstraction to favor, which pattern to adopt.
+
+**In the current docs, prescriptions are primarily operational:**
+- "Use `uvx create-dagster@latest project`"
+- "Use `dg scaffold defs dagster.asset`"
+- "Use `dg check defs` before running"
+- "Components provide a low-code interface in YAML"
+- "Use `dg launch --assets '*'`"
+
+These tell users *what to do* — which command to run, which tool to use, which format to write config in.
+
+### 5.5 Deprecation Language
+
+| | 1.6 | Current |
+|---|-----|---------|
+| Explicit deprecation notices | 0 | ~5 |
+| APIs marked for removal | 0 | `SourceAsset` (→ `AssetSpec`), `AutoMaterializePolicy` (→ `AutomationCondition`), `AutoMaterializeRule`, `@multi_asset_sensor` |
+| Discouraged patterns | 0 | Ops for new projects, asset sensors for automation, unit testing external system logic, hard-coding credentials |
+
+The 1.6 docs contained **zero** deprecation or discouragement language. Even ops were described as "the core unit of computation" — just placed under an Advanced section. The current docs actively deprecate multiple APIs and discourage several patterns.
+
+---
+
+## Part 6: Hands-On Code Examples Comparison
+
+### 6.1 Aggregate Code Example Counts
+
+| Example Type | Dagster 1.6 (15 pages) | Current (18 pages) | Change |
+|-------------|------------------------|-------------------|--------|
+| **Full runnable examples** (copy-paste and run) | 5 | ~27 | **+440%** |
+| **Code snippets** (fragments showing a concept) | 49 | ~37 | -24% |
+| **CLI commands** | 13 | ~42 | **+223%** |
+| **Configuration examples** (YAML, directory trees) | 5 | ~20 | **+300%** |
+| **GRAND TOTAL** | **72** | **~126** | **+75%** |
+
+### 6.2 Analysis of the Shift
+
+The numbers tell a clear story about how the docs' teaching philosophy changed:
+
+**1. Full runnable examples increased 5x.** The current docs invest heavily in code you can actually copy-paste and run. In 1.6, most tutorial code was fragments requiring prior context (49 snippets vs 5 full examples). The current docs flip that ratio — more complete examples than fragments.
+
+**2. CLI commands tripled.** This reflects the new `dg` CLI-centric workflow. In 1.6, you ran `dagster dev` and maybe `dagster project scaffold`. In the current docs, every tutorial step involves a `dg` subcommand: `dg scaffold defs`, `dg check defs`, `dg dev`, `dg launch`, `dg scaffold build-artifacts`, plus installation commands for `uv`, `create-dagster`, etc.
+
+**3. Configuration examples quadrupled.** This reflects the shift to YAML-based Components. In 1.6, configuration was pure Python — no YAML files to show. The current docs have `defs.yaml` examples, `pyproject.toml` structures, and directory tree layouts on nearly every page.
+
+**4. Code snippets slightly decreased.** Despite having more total code blocks, the current docs have fewer *fragment* snippets. This is because the docs moved toward showing complete, runnable code rather than illustrative fragments. This is a pedagogical improvement — users can actually run what they see.
+
+### 6.3 Per-Page Code Density
+
+**Dagster 1.6 — code-heavy pages:**
+| Page | Total Code Blocks |
+|------|-------------------|
+| `/concepts/assets/software-defined-assets` | **20** (highest) |
+| `/concepts/ops-jobs-graphs/ops` | **11** |
+| `/tutorial/saving-your-data` | **8** |
+| All other pages | 0-5 each |
+
+**Current — code-heavy pages:**
+| Page | Total Code Blocks |
+|------|-------------------|
+| `/guides/build/components` | **~12** (highest) |
+| `/getting-started/quickstart` | **~11** |
+| `/guides/build/assets` | **~11** |
+| `/tutorial/components` | **~9** |
+| `/etl-pipeline-tutorial/extract` | **~9** |
+| All other pages | 4-8 each |
+
+In 1.6, code density was concentrated in the concepts layer (the SDA page alone had 20 blocks). In the current docs, code is more evenly distributed across getting started, tutorials, and guides — reflecting the linear funnel approach where every step has executable code.
+
+### 6.4 What the Examples Teach
+
+**In 1.6**, the highest-code-density page (`concepts/assets/software-defined-assets`) showed *many ways* to accomplish things:
+- Basic deps, managed-loading deps, explicit `AssetIn` deps, `SourceAsset` deps
+- Single output, multi-output, conditional materialization
+- Group assignment via decorator vs `load_assets_from_package_module`
+- Config via decorator, via run config, via factory
+
+This was a **reference encyclopedia** — "here are all the patterns, pick what fits."
+
+**In the current docs**, the highest-code-density pages show *one way* to accomplish each thing:
+- One way to scaffold (`dg scaffold defs`)
+- One way to define assets (`@dg.asset`)
+- One way to configure components (`defs.yaml`)
+- One way to automate (`AutomationCondition`)
+
+This is a **recipe book** — "here's the recipe, follow the steps."
 
 ---
 
