@@ -800,6 +800,170 @@ This is positioned as the natural evolution: *"In this tutorial, you will learn 
 
 ---
 
+## Part 7: Examples, Mini-Examples, and Reference Architectures
+
+The examples ecosystem is one of the most dramatically changed areas between 1.6 and the current docs. In 1.6, examples were CLI-extractable project templates in the monorepo. In the current docs, examples have been elevated to a first-class documentation tier with multi-page tutorials, reference architectures, and domain-specific full pipelines.
+
+### 7.1 Dagster 1.6: CLI-Extractable Example Templates
+
+In 1.6, the primary mechanism was:
+
+```bash
+dagster project from-example --example <name> --name <my-project>
+dagster project list-examples    # discover available examples
+```
+
+All examples lived in the `dagster-io/dagster` monorepo under `/examples/`. There were **27 directories (24 user-facing)** organized into these categories:
+
+| Category | Count | Key Examples |
+|----------|-------|-------------|
+| **Quickstarts** | 4 | `quickstart_etl` (local), `quickstart_aws` (S3), `quickstart_gcp` (BigQuery), `quickstart_snowflake` |
+| **Reference architecture** | 1 | `project_fully_featured` (HN analytics + ML + dbt, **[UNMAINTAINED]**) |
+| **Tutorial companions** | 3 | `tutorial`, `tutorial_notebook_assets`, `project_dagster_university_start` |
+| **Asset pattern examples** | 5 | `assets_dbt_python`, `assets_modern_data_stack`, `assets_dynamic_partitions`, etc. |
+| **Feature demonstrations** | 4 | `assets_smoke_test`, `feature_graph_backed_assets`, `development_to_production`, etc. |
+| **Integration examples** | 5 | `with_airflow`, `with_great_expectations`, `with_wandb`, `with_pyspark`, `with_pyspark_emr` |
+| **Deployment examples** | 3 | `deploy_docker`, `deploy_ecs`, `deploy_k8s` |
+
+**Key characteristics of 1.6 examples:**
+
+1. **All were self-contained project scaffolds** — you ran `dagster project from-example` and got a working project directory with `setup.py`, assets, resources, schedules, and tests.
+
+2. **The "fully featured" reference was UNMAINTAINED** — `project_fully_featured`, the flagship reference architecture (HN activity data, ML recommender, dbt analytics, multi-environment deploy), was already marked `[UNMAINTAINED]` in 1.6, with users directed to the "Dagster Open Platform" repo.
+
+3. **Examples showed diverse patterns** — the collection included ops-based patterns (`with_pyspark`, `with_great_expectations`), asset-based patterns (`assets_dbt_python`), and mixed patterns. There was no single "right way" enforced.
+
+4. **Quickstarts were interchangeable** — all four quickstarts followed the same HackerNews ETL pattern but with different storage backends (local, S3, BigQuery, Snowflake), letting users pick their cloud.
+
+**Verbatim from the 1.6 "Create New Project" page:**
+
+> *"You can also generate a Dagster project from an official Dagster example, which is useful for learning: `dagster project from-example --name my-dagster-project --example quickstart_etl`"*
+
+This positioned examples as a **learning aid** — something to copy from, not a reference to follow exactly.
+
+### 7.2 Current Docs: Full-Pipeline Tutorials and Reference Architectures
+
+The current docs organize examples into a **three-tier hierarchy** that didn't exist in 1.6:
+
+#### Tier 1: Full Pipeline Tutorials (9 multi-page walkthroughs)
+
+These are the standout addition. Each is a guided, multi-page tutorial building a complete real-world pipeline:
+
+| # | Tutorial | Domain | Tech Stack | Uses Components? | Pages |
+|---|----------|--------|------------|-------------------|-------|
+| 1 | **ETL Pipeline** | Data engineering | DuckDB + Sling + dbt + Evidence | **Yes** (`DbtProjectComponent`, Sling component) | ~8 |
+| 2 | **Dagster + dbt** | Analytics | dbt + DuckDB + `DbtProjectComponent` | **Yes** | ~5 |
+| 3 | **Bluesky Analytics** | Social media analytics | Bluesky API + Cloudflare R2 + dbt + Power BI | Mixed (custom resource + BI integration) | ~4 |
+| 4 | **RAG with Pinecone** | AI/ML | GitHub API + OpenAI + Pinecone | No (standard Python assets) | ~4 |
+| 5 | **Podcast Transcription** | AI/ML | RSS + Modal (serverless) + Dagster Pipes | No (Pipes + factory pattern) | ~3 |
+| 6 | **Prompt Engineering** | AI/ML | Anthropic Claude + NREL API + Pydantic | No (standard assets) | ~2 |
+| 7 | **LLM Fine-Tuning** | AI/ML | Goodreads dataset + DuckDB + OpenAI | No (standard assets) | ~4 |
+| 8 | **DSPy Puzzle Solving** | AI/ML | DSPy + MIPROv2 + custom `DSPyModelBuilder` | **Yes** (custom component authoring) | ~3 |
+| 9 | **ML Pipeline (PyTorch)** | ML | MNIST + PyTorch CNN + batch inference | No (standard assets) | ~3 |
+
+**Key observation:** 4 of 9 full pipelines are AI/ML focused, reflecting Dagster's strategic push into AI orchestration. In 1.6, there was only 1 ML-related example (`project_fully_featured`'s recommender, which was unmaintained).
+
+#### Tier 2: Reference Architectures (4 architectural patterns)
+
+These are entirely new — conceptual architecture diagrams with integration patterns, not runnable code:
+
+| # | Architecture | Pattern | Key Technologies |
+|---|-------------|---------|-----------------|
+| 1 | **ETL / Reverse ETL** | Salesforce → Fivetran → Snowflake → dbt → Hightouch → Salesforce | `FivetranAccountComponent` |
+| 2 | **BI (Business Intelligence)** | Shopify/Postgres → Airbyte → warehouse → dbt → BI tools | `AirbyteWorkspaceComponent` |
+| 3 | **RAG** | GitHub GraphQL → embeddings (OpenAI) → vector DB | Standard Python patterns |
+| 4 | **Real-Time System** | dlt extraction → ClickHouse, Kafka events → materialized views | dlt integration |
+
+Reference architectures had **no equivalent in 1.6**. The closest thing was `project_fully_featured`, which was a runnable project, not an architectural pattern. Additionally, the [hooli-data-eng-pipelines](https://github.com/dagster-io/hooli-data-eng-pipelines) GitHub repo serves as a more advanced reference architecture (multi-project workspace, Dagster+ Hybrid K8s deployment, CI/CD with GitHub Actions, RBAC), but it's not prominently linked from the new docs examples section.
+
+#### Tier 3: Mini Examples (9 focused pattern guides) — NEW
+
+This is a particularly interesting addition. Mini examples are **the one area of the current docs that explicitly presents multiple approaches with trade-offs** — a style much closer to the 1.6 "here are your options" philosophy. They are described as *"focused, pattern-based guides for common Dagster use cases and architectural decisions."*
+
+| # | Mini Example | What It Explores | Approaches Compared |
+|---|-------------|-----------------|-------------------|
+| 1 | **Dynamic Fanout** | Processing variable numbers of items in parallel | Dynamic outputs vs static |
+| 2 | **Dynamic Outputs vs Python Parallelism** | Parallelism strategies | Dagster dynamic outputs vs `concurrent.futures` — trade-offs in observability, performance, resource consumption |
+| 3 | **Asset Health Monitoring** | Monitoring critical Tier-0 assets | Materialization tracking, data quality checks, freshness policies |
+| 4 | **Resource Caching** | Caching expensive operations in resources | API calls, DB queries, heavy computations |
+| 5 | **Sharing Code Across Code Locations** | DRY code across multiple code locations | Shared modules, factories, helpers |
+| 6 | **Partition Backfill Strategies** | Three backfill strategies | One-run-per-partition vs batched vs single-run (`BackfillPolicy`) — trade-offs in overhead, fault isolation, resource utilization |
+| 7 | **Partitions vs Config** | Parameterizing pipelines | Partitions vs run configuration — trade-offs in tracking, observability, workflow |
+| 8 | **PII Redaction in Compute Logs** | Automatic PII redaction | Custom compute log manager approaches |
+| 9 | **Lambda Run Launcher** | Serverless run execution | AWS Lambda instead of ECS/containers for lightweight jobs |
+
+**Why this matters for the analysis:** Mini examples are the counterbalance to the prescriptive tutorials. While the Full Pipeline tutorials say "do it this way," mini examples say "here are 2-3 approaches, each with distinct trade-offs in X, Y, and Z." This is the closest the current docs get to the 1.6 "encyclopedia of patterns" style — but mini examples are scoped to operational decisions (how to backfill, how to parallelize), not to fundamental abstractions (assets vs ops). The *what to build with* is prescribed; the *how to tune it* allows choice.
+
+Notably, mini examples do **not** use Components or the `dg` CLI — they focus on core Python-level Dagster patterns. This reinforces that Components are the prescribed path for building, while Python patterns are the flexible layer for optimization.
+
+#### Tier 4: GitHub Examples (still present, evolving)
+
+The `/examples/` directory in the monorepo now contains **~49 directories** (up from 27 in 1.6):
+
+| Category | Count | New Since 1.6 |
+|----------|-------|---------------|
+| Full pipeline companions (`docs_projects/`) | ~9 | All new |
+| Airflow migration (`airlift-*`, `starlift-*`) | 4 | All new |
+| Components-era examples | 3 | All new (`components_yaml_checks_dsl`, `ingestion-patterns`, `data-quality-patterns`) |
+| Domain examples | 3 | `snowflake_cortex`, `google_drive_factory`, `with_openai` |
+| Legacy/unmaintained | ~15 | Carried over from 1.6 |
+| Deployment | 3 | Carried over |
+| Internal (`docs_snippets`, `experimental`) | 3 | Expanded |
+
+### 7.3 Side-by-Side Comparison
+
+| Dimension | 1.6 Examples | Current Examples |
+|-----------|-------------|-----------------|
+| **Total count** | 24 user-facing | ~56 (18 on docs site + ~33 on GitHub + ~5 experimental) |
+| **Discovery** | `dagster project list-examples` CLI | Browsable on docs site at `/examples/` |
+| **Delivery mechanism** | `dagster project from-example` scaffold | Multi-page tutorial on docs site |
+| **Reference architectures** | 1 (unmaintained) | 4 (new category, aspirational not runnable) |
+| **Full pipeline tutorials** | 0 (tutorial was concept-focused) | 9 multi-page walkthroughs (~36 sub-pages) |
+| **Mini examples** | 0 | 9 (pattern-focused, trade-off-oriented) |
+| **AI/ML coverage** | 1 (recommender, unmaintained) | 5 full pipelines (RAG, Fine-Tuning, DSPy, PyTorch, Prompt Engineering) |
+| **Components-era examples** | 0 | ~7 use Components/`dg` CLI |
+| **Airflow migration** | 1 (`with_airflow`) | 4 dedicated examples (`airlift-*`, `starlift-*`) |
+| **Unmaintained examples** | ~9 | ~15 (carried over + newly unmaintained) |
+| **Quickstart examples** | 4 (one per cloud) | Replaced by `create-dagster` quickstart |
+| **Shows multiple approaches** | Most examples showed one approach | Mini examples show 2-3 approaches with trade-offs; full pipelines show one |
+
+### 7.4 What This Means for the Analysis
+
+The examples evolution reinforces the themes from earlier sections — but with one important nuance provided by the mini-examples:
+
+**1. From "copy and adapt" to "follow the tutorial."**
+
+In 1.6, examples were **templates**: you scaffolded a project from an example and modified it. The example itself was a starting point, and users were expected to understand and change the code. The `quickstart_etl` README said:
+> *"The purpose of this project is to provide a starting point for your Dagster pipelines."*
+
+In the current docs, examples are **guided walkthroughs**: each has 3-8 pages of step-by-step instructions with exact commands, exact YAML, and exact code to paste. Users follow the tutorial as written. The ETL Pipeline tutorial introduction says:
+> *"In this tutorial, you will build a data pipeline that extracts data from files into DuckDB, transforms it with dbt, and visualizes the results."*
+
+The 1.6 framing gives ownership ("your pipelines"). The current framing describes an outcome ("you will build").
+
+**2. Reference architectures are a new opinionation tool.**
+
+The four reference architectures (ETL/Reverse ETL, BI, RAG, Real-Time) are inherently opinionated — they prescribe which tools to use in combination (Fivetran + Snowflake + dbt + Hightouch, or Airbyte + dbt + BI tools). In 1.6, there was no equivalent guidance on technology combinations. The reference architectures answer a question 1.6 never addressed: "What should my overall data platform look like?"
+
+**3. The AI/ML pivot is visible in examples first.**
+
+5 of the 9 full-pipeline tutorials are AI/ML focused (RAG, Prompt Engineering, LLM Fine-Tuning, DSPy, ML Pipeline). This represents a major strategic shift that's more visible in the examples than in the core docs. In 1.6, AI/ML was an afterthought (one unmaintained recommender model). In the current docs, AI/ML is nearly half the showcase material.
+
+### 7.5 How to Categorize Examples in This Analysis
+
+The examples section fits into the analysis framework as follows:
+
+| Analysis Category | How Examples Contribute |
+|------------------|----------------------|
+| **Opinionation** (Part 2) | Reference architectures prescribe technology stacks. Full pipeline tutorials prescribe exact workflows. This is a **significant increase** in opinionation through examples. |
+| **Onboarding** (Part 3) | The ETL Pipeline tutorial is now a core part of the onboarding funnel (it follows the Basics Tutorial). In 1.6, examples were optional side-resources. This makes examples a **primary onboarding tool** rather than supplementary material. |
+| **Prescriptive guidance** (Part 5) | Every full-pipeline tutorial page has 5-7 prescriptive instances. With 9 tutorials averaging 4 pages each, that's ~36 pages of prescriptive example content that **didn't exist in 1.6**. |
+| **Hands-on code** (Part 6) | The 9 full-pipeline tutorials collectively contain ~200+ code blocks (Python, YAML, CLI, config). This is the single largest source of runnable code in the current docs and **triples** the total hands-on example surface area vs 1.6. |
+| **Best practices** (Part 3.2) | Reference architectures implicitly communicate "this is how a Dagster data platform should be structured" — a form of best-practice guidance that goes beyond individual project structure to **platform architecture**. |
+| **Counterpoint to opinionation** | Mini examples are the **one area** where the current docs explicitly present multiple approaches with trade-offs. This creates a two-layer model: the tutorials/full pipelines say *"build this way"* while the mini examples say *"once you're building, here are choices to consider."* 1.6 had this flexibility at the foundational level (assets vs ops); the current docs push it up to the operational level (how to backfill, how to parallelize). |
+
+---
+
 ## Appendix A: Key Feature Timeline (1.6 → Current)
 
 | Version | Codename | Date | Key Changes |
