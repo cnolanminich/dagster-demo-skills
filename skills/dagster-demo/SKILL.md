@@ -18,7 +18,7 @@ Use the **dagster-expert** skill to create a new Dagster project in the provided
 
 ### Step 2: Generate and Customize Demo Assets
 
-Use the **use-or-subclass-existing-component** skill for integrations that Dagster already has. If no existing component covers the use case, use the **create-custom-dagster-component** skill.
+Use the **use-or-subclass-existing-component** skill for integrations that Dagster already has. If no existing component covers the use case, use the **dagster-expert** skill.
 
 Each component should have:
 - 3-5 realistic assets with proper dependencies and descriptive names
@@ -61,6 +61,5 @@ Use the **consolidate-defs-yaml** skill to combine related component YAML files.
 | Skill | Purpose |
 |-------|---------|
 | **use-or-subclass-existing-component** | Use or subclass existing Dagster integration components with demo_mode support |
-| **create-custom-dagster-component** | Create a custom component when no existing integration exists |
 | **create-scheduled-jobs** | Create scheduled job instances using asset selection syntax |
 | **consolidate-defs-yaml** | Consolidate related YAML files into single defs.yaml using `---` separators |
