@@ -1,0 +1,20 @@
+# MariaDB CDC sensor - observes GTID-based replication
+type: data_platform.components.mariadb_cdc_sensor_component.MariadbCdcSensorComponent
+
+attributes:
+  demo_mode: true
+  mariadb_host: "mariadb.internal.example.com"
+  mariadb_port: 3306
+  mariadb_user: "cdc_reader"
+  mariadb_password: "demo_password"
+  cdc_state_table: "cdc_metadata.replication_state"
+  minimum_interval_seconds: 60
+  tracked_tables:
+    - source_table: "ecommerce.orders"
+      destination_table: "orders"
+    - source_table: "ecommerce.order_items"
+      destination_table: "order_items"
+    - source_table: "ecommerce.customers"
+      destination_table: "customers"
+    - source_table: "ecommerce.inventory"
+      destination_table: "inventory"

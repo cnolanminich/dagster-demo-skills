@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: fivetran_salesforce
+    description: "Salesforce data loaded by Fivetran"
+    tables:
+      - name: accounts
+      - name: opportunities
+      - name: contacts
+
+  - name: fivetran_stripe
+    description: "Stripe payment data loaded by Fivetran"
+    tables:
+      - name: payments
+      - name: invoices
+      - name: subscriptions
+
+  - name: rivery_hubspot
+    description: "HubSpot marketing data loaded by Rivery"
+    tables:
+      - name: marketing_campaigns
+      - name: email_events
+      - name: deals
+
+  - name: cdc_mariadb
+    description: "MariaDB tables replicated via CDC with GTID tracking"
+    tables:
+      - name: orders
+      - name: order_items
+      - name: customers
+      - name: inventory

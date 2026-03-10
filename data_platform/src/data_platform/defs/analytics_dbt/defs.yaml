@@ -1,0 +1,6 @@
+# dbt transformation - analytics models
+type: dagster_dbt.DbtProjectComponent
+
+attributes:
+  project:
+    project_dir: dbt_project

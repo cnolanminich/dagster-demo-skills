@@ -1,0 +1,31 @@
+# Hourly ingestion schedule - Rivery + Fivetran sources
+type: data_platform.components.scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "hourly_ingestion_job"
+  cron_schedule: "0 * * * *"
+  asset_selection: "group:rivery_ingestion or group:fivetran_ingestion"
+---
+# Daily transformation schedule - all dbt models
+type: data_platform.components.scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "daily_transformation_job"
+  cron_schedule: "0 6 * * *"
+  asset_selection: "kind:dbt"
+---
+# Daily BI refresh schedule - Sigma dashboards
+type: data_platform.components.scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "daily_bi_refresh_job"
+  cron_schedule: "0 8 * * *"
+  asset_selection: "tag:bi_tool=sigma"
+---
+# Weekly full pipeline refresh
+type: data_platform.components.scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "weekly_full_pipeline_job"
+  cron_schedule: "0 2 * * 0"
+  asset_selection: "*"

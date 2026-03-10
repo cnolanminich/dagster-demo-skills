@@ -1,0 +1,21 @@
+# Sigma Computing BI workbooks
+type: data_platform.components.sigma_workspace_component.SigmaWorkspaceComponent
+
+attributes:
+  demo_mode: true
+  client_id: "demo_sigma_client_id"
+  client_secret: "demo_sigma_client_secret"
+  base_url: "https://api.sigmacomputing.com"
+  workbooks:
+    - name: "revenue_dashboard"
+      workbook_id: "wb_revenue_001"
+      upstream_assets:
+        - "analytics/fct_revenue"
+    - name: "customer_360_report"
+      workbook_id: "wb_customer_001"
+      upstream_assets:
+        - "analytics/fct_customer_360"
+    - name: "marketing_attribution_report"
+      workbook_id: "wb_marketing_001"
+      upstream_assets:
+        - "analytics/fct_marketing_attribution"
