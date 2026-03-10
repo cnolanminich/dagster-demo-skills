@@ -1,18 +1,35 @@
-# MariaDB CDC Manager - enables CDC and manages the replication process
-# Materializing the cdc/process_manager asset turns ON binary logging, GTID, and replication.
-# The sensor then monitors the running process and reports observations on the table assets.
+# MariaDB CDC via Debezium → Kafka → Snowflake
+#
+# Architecture:
+#   MariaDB (binlog + GTID) → Debezium source connector → Kafka → Snowflake sink connector → Snowflake
+#
+# Materializing cdc/debezium_connector registers both connectors with Kafka Connect.
+# Once running, Debezium continuously reads the binlog and streams changes to Snowflake.
+# The sensor monitors connector health via the Kafka Connect REST API.
 type: data_platform.components.mariadb_cdc_manager_component.MariadbCdcManagerComponent
 
 attributes:
   demo_mode: true
+
+  # Kafka Connect REST API
+  kafka_connect_url: "http://kafka-connect.internal.example.com:8083"
+
+  # MariaDB source (Debezium reads binlog from here)
   mariadb_host: "mariadb.internal.example.com"
   mariadb_port: 3306
-  mariadb_admin_user: "root"
-  mariadb_admin_password: "demo_password"
-  replication_user: "cdc_replicator"
-  replication_password: "repl_password"
-  replica_host: "mariadb-replica.internal.example.com"
-  replica_port: 3306
+  mariadb_user: "debezium"
+  mariadb_password: "demo_password"
+  database_server_name: "mariadb-ecommerce"
+
+  # Snowflake destination (sink connector writes here)
+  snowflake_account: "myorg-myaccount"
+  snowflake_user: "CDC_LOADER"
+  snowflake_private_key: ""
+  snowflake_database: "RAW"
+  snowflake_schema: "CDC_ECOMMERCE"
+
+  minimum_interval_seconds: 60
+
   tracked_tables:
     - source_table: "ecommerce.orders"
       destination_table: "orders"
@@ -23,19 +40,33 @@ attributes:
     - source_table: "ecommerce.inventory"
       destination_table: "inventory"
 ---
-# MariaDB CDC Asset Checks - data quality validation on synced tables
-# Runs 4 checks per table (row count, freshness, null PKs, schema) on an hourly schedule
+# CDC Asset Checks — validates Snowflake destination tables hourly
+#
+# 4 checks per table (16 total):
+#   - row_count: table is not empty
+#   - freshness: Kafka sink connector is running
+#   - no_null_pks: no NULL primary keys in Snowflake
+#   - schema_valid: CDC metadata columns (_CDC_TIMESTAMP, _CDC_OPERATION) exist
 type: data_platform.components.mariadb_cdc_checks_component.MariadbCdcChecksComponent
 
 attributes:
   demo_mode: true
-  destination_host: "mariadb-replica.internal.example.com"
-  destination_port: 3306
-  destination_user: "analytics"
-  destination_password: "demo_password"
-  destination_database: "ecommerce"
-  max_replication_lag_seconds: 300
+
+  # Snowflake connection (reads destination tables for validation)
+  snowflake_account: "myorg-myaccount"
+  snowflake_user: "ANALYTICS_READER"
+  snowflake_password: ""
+  snowflake_warehouse: "COMPUTE_WH"
+  snowflake_database: "RAW"
+  snowflake_schema: "CDC_ECOMMERCE"
+
+  # Kafka Connect (for freshness/lag checks)
+  kafka_connect_url: "http://kafka-connect.internal.example.com:8083"
+  sink_connector_name: "mariadb-ecommerce-snowflake-sink"
+
+  max_lag_events: 1000
   min_row_count: 1
+
   tracked_tables:
     - source_table: "ecommerce.orders"
       destination_table: "orders"

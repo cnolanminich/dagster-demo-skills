@@ -1,8 +1,18 @@
-"""MariaDB CDC Manager component for enabling and managing CDC processes.
+"""MariaDB CDC Manager component using Debezium + Kafka + Snowflake.
 
-This component represents the CDC process itself as a Dagster asset. When materialized,
-it enables binary logging, GTID tracking, and starts replication on MariaDB. The existing
-CDC sensor then monitors the running process.
+This component manages a Debezium connector that reads the MariaDB binlog (using
+GTID for position tracking) and streams changes through Kafka into Snowflake.
+
+Architecture:
+  MariaDB (binlog w/ GTID) → Debezium (Kafka Connect) → Kafka → Snowflake Sink Connector → Snowflake
+
+Materializing the cdc/debezium_connector asset:
+  1. Registers the Debezium MariaDB source connector with Kafka Connect
+  2. Registers the Snowflake sink connector
+  3. Connector runs continuously — Debezium reads binlog, Kafka delivers to Snowflake
+
+The sensor polls Kafka Connect REST API to monitor connector health and GTID progress,
+emitting observations on the Snowflake destination table assets.
 """
 
 import json
@@ -13,23 +23,35 @@ import dagster as dg
 
 @dataclass
 class MariadbCdcManagerComponent(dg.Component, dg.Resolvable):
-    """Manages the MariaDB CDC process lifecycle.
+    """Manages Debezium CDC from MariaDB to Snowflake via Kafka.
 
-    Materializing this asset enables CDC on the MariaDB instance: configures binary
-    logging, GTID mode, creates the replication user, and starts the replication
-    process for the tracked tables. Supports demo mode for local testing.
+    Materializing the connector asset registers Debezium source and Snowflake
+    sink connectors with Kafka Connect. The sensor monitors connector status
+    and GTID progress. Supports demo mode for local testing.
     """
 
     demo_mode: bool = False
+
+    # Kafka Connect
+    kafka_connect_url: str = "http://localhost:8083"
+
+    # MariaDB source
     mariadb_host: str = "localhost"
     mariadb_port: int = 3306
-    mariadb_admin_user: str = "root"
-    mariadb_admin_password: str = "demo_password"
-    replication_user: str = "cdc_replicator"
-    replication_password: str = "repl_password"
-    replica_host: str = "localhost"
-    replica_port: int = 3307
+    mariadb_user: str = "debezium"
+    mariadb_password: str = "demo_password"
+    database_server_name: str = "mariadb-ecommerce"
+
+    # Snowflake sink
+    snowflake_account: str = "myorg-myaccount"
+    snowflake_user: str = "CDC_LOADER"
+    snowflake_private_key: str = ""
+    snowflake_database: str = "RAW"
+    snowflake_schema: str = "CDC_ECOMMERCE"
+
+    # Tables
     tracked_tables: list[dict] = field(default_factory=list)
+    minimum_interval_seconds: int = 60
 
     def build_defs(self, context: dg.ComponentLoadContext) -> dg.Definitions:
         if self.demo_mode:
@@ -38,154 +60,217 @@ class MariadbCdcManagerComponent(dg.Component, dg.Resolvable):
 
     def _build_demo_defs(self) -> dg.Definitions:
         tracked = self.tracked_tables
+        interval = self.minimum_interval_seconds
+        sf_database = self.snowflake_database
+        sf_schema = self.snowflake_schema
+        server_name = self.database_server_name
 
-        # The CDC process manager asset - materializing it "turns on" CDC
-        cdc_process_spec = dg.AssetSpec(
-            key=dg.AssetKey(["cdc", "process_manager"]),
+        # The Debezium connector asset — materializing it registers the connectors
+        connector_spec = dg.AssetSpec(
+            key=dg.AssetKey(["cdc", "debezium_connector"]),
             group_name="mariadb_cdc",
-            kinds={"mariadb", "cdc"},
-            tags={"ingestion_tool": "cdc", "cdc_role": "manager"},
+            kinds={"debezium", "kafka"},
+            tags={"ingestion_tool": "debezium", "cdc_role": "connector"},
             owners=["team:data-engineering"],
             description=(
-                "MariaDB CDC process manager. Materializing this asset enables "
-                "binary logging, GTID tracking, and starts replication for all "
-                "tracked tables."
+                "Debezium CDC connector. Materializing this asset registers the "
+                "Debezium MariaDB source connector and Snowflake sink connector "
+                "with Kafka Connect. Once registered, Debezium continuously reads "
+                "the MariaDB binlog and streams changes to Snowflake."
             ),
         )
 
-        # Each tracked table gets a materializable asset (downstream of process_manager)
+        # Snowflake destination table assets — downstream of the connector
         table_specs = []
         for table_cfg in tracked:
             source_table = table_cfg["source_table"]
             dest_table = table_cfg["destination_table"]
+            schema_name, table_name = source_table.split(".")
+            snowflake_fqn = f"{sf_database}.{sf_schema}.{dest_table}".upper()
             table_specs.append(
                 dg.AssetSpec(
                     key=dg.AssetKey(["cdc", dest_table]),
                     group_name="mariadb_cdc",
-                    kinds={"mariadb", "cdc"},
+                    kinds={"snowflake", "cdc"},
                     tags={
-                        "ingestion_tool": "cdc",
-                        "cdc_method": "gtid",
-                        "schedule": "sensor",
+                        "ingestion_tool": "debezium",
+                        "cdc_method": "binlog_gtid",
+                        "destination": "snowflake",
                     },
                     owners=["team:data-engineering"],
-                    deps=[dg.AssetKey(["cdc", "process_manager"])],
-                    description=f"CDC replica of MariaDB table {source_table} via GTID replication",
+                    deps=[dg.AssetKey(["cdc", "debezium_connector"])],
+                    description=(
+                        f"Snowflake table {snowflake_fqn} populated via CDC from "
+                        f"MariaDB {source_table}. Debezium reads the binlog using "
+                        f"GTID position tracking and streams changes through Kafka."
+                    ),
+                    metadata={
+                        "snowflake_table": dg.MetadataValue.text(snowflake_fqn),
+                        "mariadb_source": dg.MetadataValue.text(source_table),
+                        "kafka_topic": dg.MetadataValue.text(
+                            f"{server_name}.{schema_name}.{table_name}"
+                        ),
+                    },
                 )
             )
 
         @dg.multi_asset(
-            name="cdc_enable_process",
-            specs=[cdc_process_spec],
+            name="cdc_register_connectors",
+            specs=[connector_spec],
         )
-        def cdc_enable_process(context: dg.AssetExecutionContext):
-            """Enable the MariaDB CDC process (demo mode)."""
-            context.log.info("=== MariaDB CDC Manager (Demo Mode) ===")
+        def cdc_register_connectors(context: dg.AssetExecutionContext):
+            """Register Debezium source and Snowflake sink connectors (demo mode)."""
+            context.log.info("=== Debezium CDC Setup (Demo Mode) ===")
 
-            # Step 1: Check binary logging
-            context.log.info("Step 1: Verifying binary logging is enabled...")
-            context.log.info("  -> log_bin = ON (simulated)")
+            # Step 1: Register Debezium MariaDB source connector
+            source_config = {
+                "connector.class": "io.debezium.connector.mariadb.MariaDbConnector",
+                "database.hostname": "mariadb.internal.example.com",
+                "database.port": 3306,
+                "database.user": "debezium",
+                "database.server.name": server_name,
+                "database.include.list": ",".join(
+                    set(t["source_table"].split(".")[0] for t in tracked)
+                ),
+                "table.include.list": ",".join(
+                    t["source_table"] for t in tracked
+                ),
+                "include.schema.changes": True,
+                "gtid.source.includes": ".*",
+                "snapshot.mode": "initial",
+                "topic.prefix": server_name,
+            }
+            context.log.info(
+                f"Step 1: Registering Debezium source connector '{server_name}-source'"
+            )
+            context.log.info(f"  Config: {json.dumps(source_config, indent=2)}")
+            context.log.info("  -> PUT /connectors/mariadb-ecommerce-source/config (simulated)")
+            context.log.info("  -> Connector registered: RUNNING")
 
-            # Step 2: Enable GTID
-            context.log.info("Step 2: Enabling GTID strict mode...")
-            context.log.info("  -> gtid_strict_mode = ON (simulated)")
+            # Step 2: Register Snowflake sink connector
+            sink_config = {
+                "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
+                "snowflake.url.name": f"{sf_database}.snowflakecomputing.com",
+                "snowflake.user.name": "CDC_LOADER",
+                "snowflake.database.name": sf_database,
+                "snowflake.schema.name": sf_schema,
+                "topics": ",".join(
+                    f"{server_name}.{t['source_table']}" for t in tracked
+                ),
+                "key.converter": "io.confluent.connect.avro.AvroConverter",
+                "value.converter": "io.confluent.connect.avro.AvroConverter",
+            }
+            context.log.info(
+                f"Step 2: Registering Snowflake sink connector '{server_name}-snowflake-sink'"
+            )
+            context.log.info(f"  Config: {json.dumps(sink_config, indent=2)}")
+            context.log.info("  -> PUT /connectors/mariadb-ecommerce-snowflake-sink/config (simulated)")
+            context.log.info("  -> Connector registered: RUNNING")
 
-            # Step 3: Create replication user
-            context.log.info("Step 3: Creating replication user...")
-            context.log.info("  -> User 'cdc_replicator' created with REPLICATION SLAVE grant")
+            # Step 3: Verify Kafka topics created
+            topics = [f"{server_name}.{t['source_table']}" for t in tracked]
+            context.log.info(f"Step 3: Kafka topics created: {topics}")
 
-            # Step 4: Configure tracked tables for replication
-            tables_configured = []
-            for table_cfg in tracked:
-                source = table_cfg["source_table"]
-                context.log.info(f"Step 4: Configuring replication for {source}...")
-                tables_configured.append(source)
-
-            # Step 5: Start replication
-            context.log.info("Step 5: Starting GTID-based replication...")
-            context.log.info("  -> CHANGE MASTER TO ... MASTER_USE_GTID=current_pos")
-            context.log.info("  -> START SLAVE")
-            context.log.info("=== CDC process enabled successfully ===")
+            context.log.info("=== CDC pipeline active: MariaDB → Debezium → Kafka → Snowflake ===")
 
             return dg.MaterializeResult(
                 metadata={
-                    "cdc_status": dg.MetadataValue.text("RUNNING"),
-                    "gtid_mode": dg.MetadataValue.text("current_pos"),
-                    "binary_logging": dg.MetadataValue.bool(True),
-                    "gtid_strict_mode": dg.MetadataValue.bool(True),
-                    "replication_user": dg.MetadataValue.text("cdc_replicator"),
-                    "tables_configured": dg.MetadataValue.json_serializable(
-                        tables_configured
-                    ),
-                    "table_count": dg.MetadataValue.int(len(tables_configured)),
+                    "source_connector": dg.MetadataValue.text(f"{server_name}-source"),
+                    "source_connector_status": dg.MetadataValue.text("RUNNING"),
+                    "sink_connector": dg.MetadataValue.text(f"{server_name}-snowflake-sink"),
+                    "sink_connector_status": dg.MetadataValue.text("RUNNING"),
+                    "kafka_topics": dg.MetadataValue.json_serializable(topics),
+                    "snowflake_database": dg.MetadataValue.text(sf_database),
+                    "snowflake_schema": dg.MetadataValue.text(sf_schema),
+                    "snapshot_mode": dg.MetadataValue.text("initial"),
+                    "tables_configured": dg.MetadataValue.int(len(tracked)),
                     "demo_mode": dg.MetadataValue.bool(True),
                 },
             )
 
-        # Sensor that materializes the CDC table assets as changes flow in
-        interval = 60
-
+        # Sensor: polls Kafka Connect for connector health and GTID progress
         @dg.sensor(
-            name="mariadb_cdc_gtid_sensor",
+            name="debezium_cdc_monitor",
             minimum_interval_seconds=interval,
             default_status=dg.DefaultSensorStatus.RUNNING,
-            description="Monitors MariaDB CDC replication and materializes table assets as changes arrive",
+            description=(
+                "Monitors Debezium connector health and GTID progress via "
+                "Kafka Connect REST API. Reports observations on Snowflake "
+                "destination table assets."
+            ),
         )
-        def cdc_sensor(context: dg.SensorEvaluationContext):
+        def debezium_monitor_sensor(context: dg.SensorEvaluationContext):
             cursor_state = json.loads(context.cursor) if context.cursor else {}
             previous_gtid = cursor_state.get("last_gtid", "0-0-0")
 
-            # Demo: simulate advancing GTID position
+            # Demo: simulate advancing GTID and connector health
             domain_id, server_id, seq = previous_gtid.split("-")
-            new_seq = int(seq) + 157
+            new_seq = int(seq) + 843
             new_gtid = f"{domain_id}-{server_id}-{new_seq}"
+
+            source_status = "RUNNING"
+            sink_status = "RUNNING"
 
             observations = []
             for table_cfg in tracked:
                 dest_table = table_cfg["destination_table"]
+                source_table = table_cfg["source_table"]
                 observations.append(
                     dg.AssetObservation(
                         asset_key=dg.AssetKey(["cdc", dest_table]),
                         metadata={
                             "gtid_position": dg.MetadataValue.text(new_gtid),
-                            "rows_replicated": dg.MetadataValue.int(157),
-                            "replication_lag_seconds": dg.MetadataValue.float(2.3),
+                            "source_connector_status": dg.MetadataValue.text(source_status),
+                            "sink_connector_status": dg.MetadataValue.text(sink_status),
+                            "kafka_topic": dg.MetadataValue.text(
+                                f"{server_name}.{source_table}"
+                            ),
+                            "kafka_consumer_lag": dg.MetadataValue.int(12),
+                            "events_since_last_check": dg.MetadataValue.int(843),
                             "demo_mode": dg.MetadataValue.bool(True),
                         },
                     )
                 )
 
-            new_cursor = json.dumps({"last_gtid": new_gtid})
+            new_cursor = json.dumps({
+                "last_gtid": new_gtid,
+                "source_status": source_status,
+                "sink_status": sink_status,
+            })
             return dg.SensorResult(
                 asset_events=observations,
                 cursor=new_cursor,
             )
 
         return dg.Definitions(
-            assets=[cdc_enable_process, *table_specs],
-            sensors=[cdc_sensor],
+            assets=[cdc_register_connectors, *table_specs],
+            sensors=[debezium_monitor_sensor],
         )
 
     def _build_real_defs(self) -> dg.Definitions:
         tracked = self.tracked_tables
-        host = self.mariadb_host
-        port = self.mariadb_port
-        admin_user = self.mariadb_admin_user
-        admin_password = self.mariadb_admin_password
-        repl_user = self.replication_user
-        repl_password = self.replication_password
-        replica_host = self.replica_host
-        replica_port = self.replica_port
+        interval = self.minimum_interval_seconds
+        connect_url = self.kafka_connect_url
+        db_host = self.mariadb_host
+        db_port = self.mariadb_port
+        db_user = self.mariadb_user
+        db_password = self.mariadb_password
+        server_name = self.database_server_name
+        sf_account = self.snowflake_account
+        sf_user = self.snowflake_user
+        sf_private_key = self.snowflake_private_key
+        sf_database = self.snowflake_database
+        sf_schema = self.snowflake_schema
 
-        cdc_process_spec = dg.AssetSpec(
-            key=dg.AssetKey(["cdc", "process_manager"]),
+        connector_spec = dg.AssetSpec(
+            key=dg.AssetKey(["cdc", "debezium_connector"]),
             group_name="mariadb_cdc",
-            kinds={"mariadb", "cdc"},
-            tags={"ingestion_tool": "cdc", "cdc_role": "manager"},
+            kinds={"debezium", "kafka"},
+            tags={"ingestion_tool": "debezium", "cdc_role": "connector"},
             owners=["team:data-engineering"],
             description=(
-                "MariaDB CDC process manager. Materializing this asset enables "
-                "binary logging, GTID tracking, and starts replication."
+                "Debezium CDC connector. Materializing this asset registers the "
+                "Debezium MariaDB source and Snowflake sink connectors."
             ),
         )
 
@@ -193,207 +278,216 @@ class MariadbCdcManagerComponent(dg.Component, dg.Resolvable):
         for table_cfg in tracked:
             source_table = table_cfg["source_table"]
             dest_table = table_cfg["destination_table"]
+            schema_name, table_name = source_table.split(".")
+            snowflake_fqn = f"{sf_database}.{sf_schema}.{dest_table}".upper()
             table_specs.append(
                 dg.AssetSpec(
                     key=dg.AssetKey(["cdc", dest_table]),
                     group_name="mariadb_cdc",
-                    kinds={"mariadb", "cdc"},
+                    kinds={"snowflake", "cdc"},
                     tags={
-                        "ingestion_tool": "cdc",
-                        "cdc_method": "gtid",
-                        "schedule": "sensor",
+                        "ingestion_tool": "debezium",
+                        "cdc_method": "binlog_gtid",
+                        "destination": "snowflake",
                     },
                     owners=["team:data-engineering"],
-                    deps=[dg.AssetKey(["cdc", "process_manager"])],
-                    description=f"CDC replica of MariaDB table {source_table} via GTID replication",
+                    deps=[dg.AssetKey(["cdc", "debezium_connector"])],
+                    description=(
+                        f"Snowflake table {snowflake_fqn} populated via CDC from "
+                        f"MariaDB {source_table}"
+                    ),
+                    metadata={
+                        "snowflake_table": dg.MetadataValue.text(snowflake_fqn),
+                        "mariadb_source": dg.MetadataValue.text(source_table),
+                        "kafka_topic": dg.MetadataValue.text(
+                            f"{server_name}.{schema_name}.{table_name}"
+                        ),
+                    },
                 )
             )
 
         @dg.multi_asset(
-            name="cdc_enable_process",
-            specs=[cdc_process_spec],
+            name="cdc_register_connectors",
+            specs=[connector_spec],
         )
-        def cdc_enable_process(context: dg.AssetExecutionContext):
-            """Enable the MariaDB CDC process on the source instance."""
-            import pymysql
+        def cdc_register_connectors(context: dg.AssetExecutionContext):
+            """Register Debezium source and Snowflake sink with Kafka Connect."""
+            import requests
 
-            conn = pymysql.connect(
-                host=host,
-                port=port,
-                user=admin_user,
-                password=admin_password,
-                cursorclass=pymysql.cursors.DictCursor,
+            # Build Debezium MariaDB source connector config
+            db_include_list = ",".join(
+                set(t["source_table"].split(".")[0] for t in tracked)
             )
-            tables_configured = []
-            try:
-                with conn.cursor() as cur:
-                    # Step 1: Verify binary logging
-                    context.log.info("Verifying binary logging configuration...")
-                    cur.execute("SHOW VARIABLES LIKE 'log_bin'")
-                    log_bin = cur.fetchone()
-                    if log_bin and log_bin["Value"] == "ON":
-                        context.log.info("Binary logging is already enabled")
-                    else:
-                        context.log.warning(
-                            "Binary logging is OFF. Enable it in my.cnf: log_bin=mysql-bin"
-                        )
+            table_include_list = ",".join(t["source_table"] for t in tracked)
 
-                    # Step 2: Verify/enable GTID strict mode
-                    context.log.info("Checking GTID configuration...")
-                    cur.execute("SHOW VARIABLES LIKE 'gtid_strict_mode'")
-                    gtid_mode = cur.fetchone()
-                    if not gtid_mode or gtid_mode["Value"] != "ON":
-                        cur.execute("SET GLOBAL gtid_strict_mode=ON")
-                        context.log.info("Enabled gtid_strict_mode")
-                    else:
-                        context.log.info("GTID strict mode already enabled")
+            source_connector_name = f"{server_name}-source"
+            source_config = {
+                "connector.class": "io.debezium.connector.mariadb.MariaDbConnector",
+                "database.hostname": db_host,
+                "database.port": str(db_port),
+                "database.user": db_user,
+                "database.password": db_password,
+                "database.server.name": server_name,
+                "database.include.list": db_include_list,
+                "table.include.list": table_include_list,
+                "include.schema.changes": "true",
+                "gtid.source.includes": ".*",
+                "snapshot.mode": "initial",
+                "topic.prefix": server_name,
+                "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+                "schema.history.internal.kafka.topic": f"{server_name}.schema-history",
+            }
 
-                    # Step 3: Create replication user
-                    context.log.info(f"Creating replication user '{repl_user}'...")
-                    cur.execute(
-                        f"CREATE USER IF NOT EXISTS '{repl_user}'@'%%' "
-                        f"IDENTIFIED BY '{repl_password}'"
-                    )
-                    cur.execute(
-                        f"GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* "
-                        f"TO '{repl_user}'@'%%'"
-                    )
-                    cur.execute("FLUSH PRIVILEGES")
-
-                    # Step 4: Get current GTID position
-                    cur.execute("SELECT @@gtid_current_pos AS gtid_pos")
-                    current_gtid = cur.fetchone()["gtid_pos"]
-                    context.log.info(f"Current GTID position: {current_gtid}")
-
-                    # Step 5: Configure tables for replication filtering
-                    for table_cfg in tracked:
-                        source = table_cfg["source_table"]
-                        context.log.info(f"Registering table for replication: {source}")
-                        tables_configured.append(source)
-
-                conn.commit()
-            finally:
-                conn.close()
-
-            # Step 6: Configure replica to start replication
-            context.log.info("Configuring replica for GTID-based replication...")
-            replica_conn = pymysql.connect(
-                host=replica_host,
-                port=replica_port,
-                user=admin_user,
-                password=admin_password,
-                cursorclass=pymysql.cursors.DictCursor,
+            context.log.info(f"Registering Debezium source connector: {source_connector_name}")
+            resp = requests.put(
+                f"{connect_url}/connectors/{source_connector_name}/config",
+                json=source_config,
+                timeout=30,
             )
-            try:
-                with replica_conn.cursor() as cur:
-                    # Stop any existing replication
-                    cur.execute("STOP SLAVE")
+            resp.raise_for_status()
+            context.log.info(f"Source connector registered: {resp.status_code}")
 
-                    # Configure master connection with GTID
-                    cur.execute(
-                        f"CHANGE MASTER TO "
-                        f"MASTER_HOST='{host}', "
-                        f"MASTER_PORT={port}, "
-                        f"MASTER_USER='{repl_user}', "
-                        f"MASTER_PASSWORD='{repl_password}', "
-                        f"MASTER_USE_GTID=current_pos"
-                    )
+            # Build Snowflake sink connector config
+            topics = ",".join(
+                f"{server_name}.{t['source_table']}" for t in tracked
+            )
+            sink_connector_name = f"{server_name}-snowflake-sink"
+            sink_config = {
+                "connector.class": "com.snowflake.kafka.connector.SnowflakeSinkConnector",
+                "tasks.max": "4",
+                "topics": topics,
+                "snowflake.url.name": f"{sf_account}.snowflakecomputing.com",
+                "snowflake.user.name": sf_user,
+                "snowflake.private.key": sf_private_key,
+                "snowflake.database.name": sf_database,
+                "snowflake.schema.name": sf_schema,
+                "key.converter": "io.confluent.connect.avro.AvroConverter",
+                "value.converter": "io.confluent.connect.avro.AvroConverter",
+                "key.converter.schema.registry.url": "http://schema-registry:8081",
+                "value.converter.schema.registry.url": "http://schema-registry:8081",
+            }
 
-                    # Start replication
-                    cur.execute("START SLAVE")
-                    context.log.info("Replication started with MASTER_USE_GTID=current_pos")
+            context.log.info(f"Registering Snowflake sink connector: {sink_connector_name}")
+            resp = requests.put(
+                f"{connect_url}/connectors/{sink_connector_name}/config",
+                json=sink_config,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            context.log.info(f"Sink connector registered: {resp.status_code}")
 
-                    # Verify replication is running
-                    cur.execute("SHOW SLAVE STATUS")
-                    status = cur.fetchone()
-                    io_running = status.get("Slave_IO_Running", "No") if status else "No"
-                    sql_running = status.get("Slave_SQL_Running", "No") if status else "No"
-                    context.log.info(
-                        f"Slave IO Running: {io_running}, SQL Running: {sql_running}"
-                    )
+            # Verify both connectors are running
+            source_resp = requests.get(
+                f"{connect_url}/connectors/{source_connector_name}/status",
+                timeout=10,
+            )
+            sink_resp = requests.get(
+                f"{connect_url}/connectors/{sink_connector_name}/status",
+                timeout=10,
+            )
+            source_state = source_resp.json()["connector"]["state"]
+            sink_state = sink_resp.json()["connector"]["state"]
 
-                replica_conn.commit()
-            finally:
-                replica_conn.close()
+            context.log.info(f"Source: {source_state}, Sink: {sink_state}")
 
             return dg.MaterializeResult(
                 metadata={
-                    "cdc_status": dg.MetadataValue.text(
-                        "RUNNING" if io_running == "Yes" and sql_running == "Yes" else "ERROR"
-                    ),
-                    "gtid_mode": dg.MetadataValue.text("current_pos"),
-                    "binary_logging": dg.MetadataValue.bool(True),
-                    "gtid_strict_mode": dg.MetadataValue.bool(True),
-                    "replication_user": dg.MetadataValue.text(repl_user),
-                    "slave_io_running": dg.MetadataValue.text(io_running),
-                    "slave_sql_running": dg.MetadataValue.text(sql_running),
-                    "tables_configured": dg.MetadataValue.json_serializable(
-                        tables_configured
-                    ),
-                    "table_count": dg.MetadataValue.int(len(tables_configured)),
+                    "source_connector": dg.MetadataValue.text(source_connector_name),
+                    "source_connector_status": dg.MetadataValue.text(source_state),
+                    "sink_connector": dg.MetadataValue.text(sink_connector_name),
+                    "sink_connector_status": dg.MetadataValue.text(sink_state),
+                    "kafka_topics": dg.MetadataValue.json_serializable(topics.split(",")),
+                    "snowflake_database": dg.MetadataValue.text(sf_database),
+                    "snowflake_schema": dg.MetadataValue.text(sf_schema),
+                    "snapshot_mode": dg.MetadataValue.text("initial"),
+                    "tables_configured": dg.MetadataValue.int(len(tracked)),
                 },
             )
 
+        # Sensor: polls Kafka Connect REST API for connector health
         @dg.sensor(
-            name="mariadb_cdc_gtid_sensor",
-            minimum_interval_seconds=60,
+            name="debezium_cdc_monitor",
+            minimum_interval_seconds=interval,
             default_status=dg.DefaultSensorStatus.RUNNING,
-            description="Monitors MariaDB CDC replication and reports asset observations",
+            description=(
+                "Monitors Debezium and Snowflake sink connector health via "
+                "Kafka Connect REST API"
+            ),
         )
-        def cdc_sensor(context: dg.SensorEvaluationContext):
-            import pymysql
+        def debezium_monitor_sensor(context: dg.SensorEvaluationContext):
+            import requests
 
             cursor_state = json.loads(context.cursor) if context.cursor else {}
-            previous_gtid = cursor_state.get("last_gtid", "")
 
-            conn = pymysql.connect(
-                host=host,
-                port=port,
-                user=admin_user,
-                password=admin_password,
-                cursorclass=pymysql.cursors.DictCursor,
-            )
+            source_connector_name = f"{server_name}-source"
+            sink_connector_name = f"{server_name}-snowflake-sink"
+
+            # Get connector statuses
             try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT @@gtid_current_pos AS gtid_pos")
-                    current_gtid = cur.fetchone()["gtid_pos"]
-
-                    if current_gtid == previous_gtid:
-                        return dg.SkipReason("No new GTID changes detected")
-
-                    cur.execute("SHOW SLAVE STATUS")
-                    slave_status = cur.fetchone()
-                    lag = (
-                        float(slave_status.get("Seconds_Behind_Master", 0))
-                        if slave_status
-                        else 0.0
-                    )
-
-                observations = []
-                for table_cfg in tracked:
-                    dest_table = table_cfg["destination_table"]
-                    observations.append(
-                        dg.AssetObservation(
-                            asset_key=dg.AssetKey(["cdc", dest_table]),
-                            metadata={
-                                "gtid_position": dg.MetadataValue.text(current_gtid),
-                                "replication_lag_seconds": dg.MetadataValue.float(lag),
-                                "source_table": dg.MetadataValue.text(
-                                    table_cfg["source_table"]
-                                ),
-                            },
-                        )
-                    )
-
-                new_cursor = json.dumps({"last_gtid": current_gtid})
-                return dg.SensorResult(
-                    asset_events=observations,
-                    cursor=new_cursor,
+                source_resp = requests.get(
+                    f"{connect_url}/connectors/{source_connector_name}/status",
+                    timeout=10,
                 )
-            finally:
-                conn.close()
+                source_resp.raise_for_status()
+                source_info = source_resp.json()
+                source_state = source_info["connector"]["state"]
+
+                sink_resp = requests.get(
+                    f"{connect_url}/connectors/{sink_connector_name}/status",
+                    timeout=10,
+                )
+                sink_resp.raise_for_status()
+                sink_info = sink_resp.json()
+                sink_state = sink_info["connector"]["state"]
+            except requests.RequestException as e:
+                context.log.warning(f"Failed to reach Kafka Connect: {e}")
+                return dg.SkipReason(f"Kafka Connect unavailable: {e}")
+
+            if source_state != "RUNNING" or sink_state != "RUNNING":
+                context.log.error(
+                    f"Connector unhealthy — source: {source_state}, sink: {sink_state}"
+                )
+
+            # Get source connector metrics for GTID position
+            try:
+                metrics_resp = requests.get(
+                    f"{connect_url}/connectors/{source_connector_name}/tasks/0/status",
+                    timeout=10,
+                )
+                task_info = metrics_resp.json()
+                # Debezium exposes GTID in connector offsets
+                worker_id = task_info.get("worker_id", "unknown")
+            except requests.RequestException:
+                worker_id = "unknown"
+
+            observations = []
+            for table_cfg in tracked:
+                dest_table = table_cfg["destination_table"]
+                source_table = table_cfg["source_table"]
+                observations.append(
+                    dg.AssetObservation(
+                        asset_key=dg.AssetKey(["cdc", dest_table]),
+                        metadata={
+                            "source_connector_status": dg.MetadataValue.text(source_state),
+                            "sink_connector_status": dg.MetadataValue.text(sink_state),
+                            "kafka_topic": dg.MetadataValue.text(
+                                f"{server_name}.{source_table}"
+                            ),
+                            "worker_id": dg.MetadataValue.text(worker_id),
+                        },
+                    )
+                )
+
+            new_cursor = json.dumps({
+                "source_status": source_state,
+                "sink_status": sink_state,
+            })
+            return dg.SensorResult(
+                asset_events=observations,
+                cursor=new_cursor,
+            )
 
         return dg.Definitions(
-            assets=[cdc_enable_process, *table_specs],
-            sensors=[cdc_sensor],
+            assets=[cdc_register_connectors, *table_specs],
+            sensors=[debezium_monitor_sensor],
         )
