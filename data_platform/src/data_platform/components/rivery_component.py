@@ -1,5 +1,11 @@
-"""Rivery ingestion component with demo mode support."""
+"""Rivery ingestion component with sync-and-poll support.
 
+Triggers Rivery river runs and polls for completion before reporting success.
+In real mode, calls the Rivery REST API to trigger a run and polls the run
+status endpoint until the river finishes or fails.
+"""
+
+import random
 from dataclasses import dataclass, field
 
 import dagster as dg
@@ -10,8 +16,9 @@ class RiveryComponent(dg.Component, dg.Resolvable):
     """Loads data from source systems via Rivery rivers (ELT pipelines).
 
     Rivery is a SaaS ELT platform that connects to various data sources and
-    loads data into cloud warehouses. This component models Rivery rivers
-    as Dagster assets, allowing you to orchestrate and monitor ingestion.
+    loads data into cloud warehouses. This component triggers river runs and
+    polls for completion (sync-and-poll), so materializations only succeed
+    when the river finishes successfully.
     """
 
     demo_mode: bool = False
@@ -43,13 +50,25 @@ class RiveryComponent(dg.Component, dg.Resolvable):
             can_subset=False,
         )
         def _rivery_asset(context: dg.AssetExecutionContext):
-            context.log.info(f"[DEMO] Simulating Rivery river '{river_name}' sync to {destination_table}")
-            rows_synced = 15000
-            context.log.info(f"[DEMO] Synced {rows_synced} rows")
+            run_id = f"demo-run-{random.randint(10000, 99999)}"
+            rows_synced = random.randint(5000, 50000)
+            duration_seconds = random.randint(12, 90)
+
+            context.log.info(f"[DEMO] Triggering Rivery river '{river_name}' sync to {destination_table}")
+            context.log.info(f"[DEMO] Run started: {run_id}")
+            context.log.info(f"[DEMO] Polling for completion...")
+            context.log.info(f"[DEMO] River '{river_name}' run {run_id}: running ({duration_seconds // 3}s elapsed)")
+            context.log.info(f"[DEMO] River '{river_name}' run {run_id}: running ({duration_seconds * 2 // 3}s elapsed)")
+            context.log.info(f"[DEMO] River '{river_name}' run {run_id}: done ({duration_seconds}s elapsed)")
+            context.log.info(f"[DEMO] Completed: {rows_synced} rows in {duration_seconds}s")
+
             return dg.MaterializeResult(
                 metadata={
-                    "rows_synced": dg.MetadataValue.int(rows_synced),
+                    "run_id": dg.MetadataValue.text(run_id),
                     "river_name": dg.MetadataValue.text(river_name),
+                    "status": dg.MetadataValue.text("done"),
+                    "rows_synced": dg.MetadataValue.int(rows_synced),
+                    "duration_seconds": dg.MetadataValue.int(duration_seconds),
                     "destination": dg.MetadataValue.text(destination_table),
                     "demo_mode": dg.MetadataValue.bool(True),
                 }
@@ -59,8 +78,10 @@ class RiveryComponent(dg.Component, dg.Resolvable):
 
     @staticmethod
     def _make_real_river_asset(river_name: str, river_id: str, destination_table: str,
-                               source_type: str, api_token: str, account_id: str):
+                               source_type: str, api_token: str, account_id: str,
+                               poll_interval_seconds: int = 15, poll_timeout_seconds: int = 3600):
         asset_key = dg.AssetKey(["rivery", destination_table])
+        base_url = f"https://api.rivery.io/v1/accounts/{account_id}"
 
         @dg.multi_asset(
             specs=[
@@ -77,21 +98,68 @@ class RiveryComponent(dg.Component, dg.Resolvable):
             can_subset=False,
         )
         def _rivery_asset(context: dg.AssetExecutionContext):
+            import time
+
             import requests
 
+            headers = {"Authorization": f"Bearer {api_token}"}
+
+            # Step 1: Trigger the river run
             context.log.info(f"Triggering Rivery river '{river_name}' (ID: {river_id})")
             resp = requests.post(
-                f"https://api.rivery.io/v1/accounts/{account_id}/rivers/{river_id}/run",
-                headers={"Authorization": f"Bearer {api_token}"},
-                timeout=300,
+                f"{base_url}/rivers/{river_id}/run",
+                headers=headers,
+                timeout=30,
             )
             resp.raise_for_status()
             run_id = resp.json().get("run_id", "unknown")
             context.log.info(f"Rivery run started: {run_id}")
+
+            # Step 2: Poll for completion
+            start_time = time.time()
+            status = "running"
+            while status in ("running", "pending"):
+                elapsed = time.time() - start_time
+                if elapsed > poll_timeout_seconds:
+                    raise TimeoutError(
+                        f"Rivery river '{river_name}' run {run_id} timed out "
+                        f"after {poll_timeout_seconds}s"
+                    )
+
+                time.sleep(poll_interval_seconds)
+
+                poll_resp = requests.get(
+                    f"{base_url}/rivers/{river_id}/runs/{run_id}",
+                    headers=headers,
+                    timeout=30,
+                )
+                poll_resp.raise_for_status()
+                run_data = poll_resp.json()
+                status = run_data.get("status", "unknown")
+                context.log.info(
+                    f"River '{river_name}' run {run_id}: {status} "
+                    f"({int(elapsed)}s elapsed)"
+                )
+
+            if status == "error":
+                error_msg = run_data.get("error_message", "Unknown error")
+                raise RuntimeError(
+                    f"Rivery river '{river_name}' run {run_id} failed: {error_msg}"
+                )
+
+            rows_synced = run_data.get("rows_synced", 0)
+            duration_seconds = int(time.time() - start_time)
+            context.log.info(
+                f"River '{river_name}' completed: {rows_synced} rows in {duration_seconds}s"
+            )
+
             return dg.MaterializeResult(
                 metadata={
                     "run_id": dg.MetadataValue.text(run_id),
                     "river_name": dg.MetadataValue.text(river_name),
+                    "status": dg.MetadataValue.text(status),
+                    "rows_synced": dg.MetadataValue.int(rows_synced),
+                    "duration_seconds": dg.MetadataValue.int(duration_seconds),
                 }
             )
 
