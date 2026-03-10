@@ -1,14 +1,41 @@
-# MariaDB CDC sensor - observes GTID-based replication
-type: data_platform.components.mariadb_cdc_sensor_component.MariadbCdcSensorComponent
+# MariaDB CDC Manager - enables CDC and manages the replication process
+# Materializing the cdc/process_manager asset turns ON binary logging, GTID, and replication.
+# The sensor then monitors the running process and reports observations on the table assets.
+type: data_platform.components.mariadb_cdc_manager_component.MariadbCdcManagerComponent
 
 attributes:
   demo_mode: true
   mariadb_host: "mariadb.internal.example.com"
   mariadb_port: 3306
-  mariadb_user: "cdc_reader"
-  mariadb_password: "demo_password"
-  cdc_state_table: "cdc_metadata.replication_state"
-  minimum_interval_seconds: 60
+  mariadb_admin_user: "root"
+  mariadb_admin_password: "demo_password"
+  replication_user: "cdc_replicator"
+  replication_password: "repl_password"
+  replica_host: "mariadb-replica.internal.example.com"
+  replica_port: 3306
+  tracked_tables:
+    - source_table: "ecommerce.orders"
+      destination_table: "orders"
+    - source_table: "ecommerce.order_items"
+      destination_table: "order_items"
+    - source_table: "ecommerce.customers"
+      destination_table: "customers"
+    - source_table: "ecommerce.inventory"
+      destination_table: "inventory"
+---
+# MariaDB CDC Asset Checks - data quality validation on synced tables
+# Runs 4 checks per table (row count, freshness, null PKs, schema) on an hourly schedule
+type: data_platform.components.mariadb_cdc_checks_component.MariadbCdcChecksComponent
+
+attributes:
+  demo_mode: true
+  destination_host: "mariadb-replica.internal.example.com"
+  destination_port: 3306
+  destination_user: "analytics"
+  destination_password: "demo_password"
+  destination_database: "ecommerce"
+  max_replication_lag_seconds: 300
+  min_row_count: 1
   tracked_tables:
     - source_table: "ecommerce.orders"
       destination_table: "orders"
