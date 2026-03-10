@@ -1,0 +1,30 @@
+type: data_platform.components.aws_dms_replication_component.AwsDmsReplicationComponent
+
+attributes:
+  demo_mode: true
+  aws_region: us-east-1
+  replication_instance_arn: "arn:aws:dms:us-east-1:123456789012:rep:EXAMPLE-REP-INSTANCE"
+  source_endpoint_arn: "arn:aws:dms:us-east-1:123456789012:endpoint:MARIADB-SOURCE"
+  target_endpoint_arn: "arn:aws:dms:us-east-1:123456789012:endpoint:SNOWFLAKE-TARGET"
+  replication_tasks:
+    - task_id: "mariadb-orders-cdc"
+      source_schema: "ecommerce"
+      source_table: "orders"
+      target_schema: "RAW_CDC"
+      target_table: "orders"
+    - task_id: "mariadb-customers-cdc"
+      source_schema: "ecommerce"
+      source_table: "customers"
+      target_schema: "RAW_CDC"
+      target_table: "customers"
+    - task_id: "mariadb-products-cdc"
+      source_schema: "ecommerce"
+      source_table: "products"
+      target_schema: "RAW_CDC"
+      target_table: "products"
+    - task_id: "mariadb-order-items-cdc"
+      source_schema: "ecommerce"
+      source_table: "order_items"
+      target_schema: "RAW_CDC"
+      target_table: "order_items"
+  minimum_interval_seconds: 60
