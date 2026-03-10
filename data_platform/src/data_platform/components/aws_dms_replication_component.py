@@ -150,7 +150,7 @@ class AwsDmsReplicationComponent(dg.Component, dg.Model, dg.Resolvable):
                     "replication_instance": dg.MetadataValue.text(instance_arn),
                     "aws_region": dg.MetadataValue.text(region),
                     "tasks_started": dg.MetadataValue.int(len(started_tasks)),
-                    "task_ids": dg.MetadataValue.json_serializable(started_tasks),
+                    "task_ids": dg.MetadataValue.json(started_tasks),
                     "replication_type": dg.MetadataValue.text("cdc"),
                     "demo_mode": dg.MetadataValue.bool(True),
                 },
@@ -388,7 +388,7 @@ class AwsDmsReplicationComponent(dg.Component, dg.Model, dg.Resolvable):
                     "replication_instance": dg.MetadataValue.text(instance_arn),
                     "aws_region": dg.MetadataValue.text(region),
                     "tasks_started": dg.MetadataValue.int(len(started_tasks)),
-                    "task_ids": dg.MetadataValue.json_serializable(started_tasks),
+                    "task_ids": dg.MetadataValue.json(started_tasks),
                     "replication_type": dg.MetadataValue.text("cdc"),
                 },
             )
