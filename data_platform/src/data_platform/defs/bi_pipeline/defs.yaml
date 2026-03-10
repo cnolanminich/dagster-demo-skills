@@ -19,3 +19,7 @@ attributes:
       workbook_id: "wb_marketing_001"
       upstream_assets:
         - "analytics/fct_marketing_attribution"
+    - name: "product_performance_report"
+      workbook_id: "wb_product_001"
+      upstream_assets:
+        - "analytics/fct_product_performance"

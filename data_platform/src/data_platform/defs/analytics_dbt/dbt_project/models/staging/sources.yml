@@ -29,3 +29,11 @@ sources:
       - name: order_items
       - name: customers
       - name: inventory
+
+  - name: dms_cdc
+    description: "MariaDB tables replicated to Snowflake via AWS DMS CDC"
+    tables:
+      - name: orders
+      - name: order_items
+      - name: customers
+      - name: products
