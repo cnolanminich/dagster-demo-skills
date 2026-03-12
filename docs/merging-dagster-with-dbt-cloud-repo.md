@@ -19,7 +19,7 @@ The two systems coexist in the same repo but do not block each other.
 |------|---------|
 | Python | 3.10 – 3.13 |
 | [uv](https://docs.astral.sh/uv/) | latest |
-| [dg CLI](https://docs.dagster.io/guides/labs/dg) | latest (installed via `uv`) |
+| [create-dagster](https://docs.dagster.io/) | latest (run via `uvx`) |
 | dbt Cloud account | with API token |
 | GitHub repository | your existing dbt Cloud repo |
 
@@ -56,18 +56,15 @@ dbt Cloud is configured to track this repo and run jobs when code changes.
 
 ## Step 2 — Initialize Dagster Alongside dbt
 
-From the repository root, scaffold a Dagster project using `dg`:
+From the repository root, scaffold a new Dagster project using `create-dagster`:
 
 ```bash
-# Install the dg CLI
-uv tool install dagster-components[dg]
-
-# Initialize a new Dagster project at the repo root
-# This creates pyproject.toml, a defs/ directory, and component scaffolding
-dg init my_dagster_project --use-workspace
+# Scaffold a new Dagster project inside the existing repo
+# --uv-sync creates the virtualenv and installs dependencies automatically
+uvx create-dagster project my_dagster_project --uv-sync
 ```
 
-This creates a workspace layout. Your repo now looks like:
+This creates the Dagster project as a subdirectory. Your repo now looks like:
 
 ```
 my-dbt-cloud-repo/
@@ -83,7 +80,6 @@ my-dbt-cloud-repo/
 │   └── my_dagster_project/
 │       └── defs/
 │           └── __init__.py
-├── workspace.yaml                     # NEW — Dagster workspace config
 └── README.md
 ```
 
@@ -250,7 +246,6 @@ my-dbt-cloud-repo/
 │           └── schedules/
 │               └── daily_pipeline.py
 │
-├── workspace.yaml
 └── README.md
 ```
 
