@@ -10,25 +10,25 @@ respective domain change:
 
 ```
 Repository Root
-├── models/, macros/, seeds/, ...     → triggers dbt_cloud_deploy.yml ONLY
-├── my_dagster_project/               → triggers dagster_deploy.yml ONLY
-└── (both change in same PR)          → BOTH workflows run independently
+├── dbt_project/                         → triggers dbt_cloud_deploy.yml ONLY
+├── my_dagster_project/                  → triggers dagster_deploy.yml ONLY
+└── (both change in same PR)             → BOTH workflows run independently
 ```
 
 ### Workflow Summary
 
 | Workflow | File | Triggers On | What It Does |
 |----------|------|-------------|--------------|
-| **dbt Cloud Deploy** | `dbt_cloud_deploy.yml` | `models/`, `macros/`, `seeds/`, `dbt_project.yml` | Lints SQL, triggers dbt Cloud CI/deploy jobs via API |
-| **Dagster Deploy** | `dagster_deploy.yml` | `my_dagster_project/`, `workspace.yaml` | Validates definitions, runs tests, deploys to Dagster Cloud |
+| **dbt Cloud Deploy** | `dbt_cloud_deploy.yml` | `dbt_project/models/`, `dbt_project/macros/`, etc. | Lints SQL, triggers dbt Cloud CI/deploy jobs via API |
+| **Dagster Deploy** | `dagster_deploy.yml` | `my_dagster_project/`, `dagster_cloud.yaml` | Validates definitions, runs tests, deploys to Dagster Cloud |
 
 ### Scenarios
 
 | Change Made | dbt Cloud Workflow | Dagster Workflow |
 |-------------|-------------------|------------------|
-| Edit `models/marts/dim_customers.sql` | Runs | Skipped |
-| Edit `my_dagster_project/defs/downstream/export.py` | Skipped | Runs |
-| Edit both a model and a Dagster asset | Runs | Runs (in parallel) |
+| Edit `dbt_project/models/marts/dim_customers.sql` | Runs | Skipped |
+| Edit `my_dagster_project/defs/exports/export.py` | Skipped | Runs |
+| Edit both a dbt model and a Dagster asset | Runs | Runs (in parallel) |
 | Edit `README.md` only | Skipped | Skipped |
 
 ## Setup Instructions
@@ -79,15 +79,15 @@ Update the `paths` filters in each workflow if your directory structure differs 
 │                   GitHub Repository                  │
 │                                                     │
 │  ┌──────────────┐          ┌──────────────────────┐ │
-│  │  dbt models  │          │  Dagster project     │ │
-│  │  models/     │          │  my_dagster_project/ │ │
-│  │  macros/     │          │                      │ │
+│  │  dbt project │          │  Dagster project     │ │
+│  │  dbt_project/│          │  my_dagster_project/ │ │
+│  │              │          │                      │ │
 │  └──────┬───────┘          └──────────┬───────────┘ │
 │         │                             │              │
 └─────────┼─────────────────────────────┼──────────────┘
           │                             │
     path filter:                  path filter:
-    models/**, macros/**          my_dagster_project/**
+    dbt_project/**              my_dagster_project/**
           │                             │
           ▼                             ▼
 ┌─────────────────┐          ┌──────────────────────┐

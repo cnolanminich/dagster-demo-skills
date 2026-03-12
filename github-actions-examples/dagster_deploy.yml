@@ -21,13 +21,13 @@ on:
     paths:
       # Only trigger when Dagster project files change
       - "my_dagster_project/**"
-      - "workspace.yaml"
+      - "dagster_cloud.yaml"
 
   pull_request:
     branches: [main]
     paths:
       - "my_dagster_project/**"
-      - "workspace.yaml"
+      - "dagster_cloud.yaml"
 
 env:
   DAGSTER_CLOUD_ORGANIZATION: ${{ secrets.DAGSTER_CLOUD_ORGANIZATION }}

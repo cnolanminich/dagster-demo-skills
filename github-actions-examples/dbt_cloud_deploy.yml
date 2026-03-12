@@ -16,29 +16,29 @@ on:
   push:
     branches: [main]
     paths:
-      # Only trigger when dbt project files change
-      - "models/**"
-      - "macros/**"
-      - "seeds/**"
-      - "snapshots/**"
-      - "tests/**"
-      - "analyses/**"
-      - "dbt_project.yml"
-      - "packages.yml"
-      - "profiles.yml"
+      # Only trigger when dbt project files change (inside dbt_project/ subdirectory)
+      - "dbt_project/models/**"
+      - "dbt_project/macros/**"
+      - "dbt_project/seeds/**"
+      - "dbt_project/snapshots/**"
+      - "dbt_project/tests/**"
+      - "dbt_project/analyses/**"
+      - "dbt_project/dbt_project.yml"
+      - "dbt_project/packages.yml"
+      - "dbt_project/profiles.yml"
 
   pull_request:
     branches: [main]
     paths:
-      - "models/**"
-      - "macros/**"
-      - "seeds/**"
-      - "snapshots/**"
-      - "tests/**"
-      - "analyses/**"
-      - "dbt_project.yml"
-      - "packages.yml"
-      - "profiles.yml"
+      - "dbt_project/models/**"
+      - "dbt_project/macros/**"
+      - "dbt_project/seeds/**"
+      - "dbt_project/snapshots/**"
+      - "dbt_project/tests/**"
+      - "dbt_project/analyses/**"
+      - "dbt_project/dbt_project.yml"
+      - "dbt_project/packages.yml"
+      - "dbt_project/profiles.yml"
 
 env:
   DBT_CLOUD_API_BASE: "https://cloud.getdbt.com/api/v2"
