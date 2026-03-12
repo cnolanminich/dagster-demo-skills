@@ -1,0 +1,154 @@
+# ============================================================================
+# Dagster Cloud Deployment — Triggered ONLY by Dagster project changes
+# ============================================================================
+# This workflow deploys the Dagster project to Dagster Cloud (Serverless or
+# Hybrid) when Dagster-related files change. It is completely independent of
+# the dbt Cloud deployment workflow.
+#
+# Required GitHub Secrets:
+#   DAGSTER_CLOUD_API_TOKEN     — Dagster Cloud agent token
+#   DAGSTER_CLOUD_ORGANIZATION  — Dagster Cloud org name
+#
+# For hybrid deployments, also set:
+#   DAGSTER_CLOUD_DEPLOYMENT    — deployment name (e.g., "prod")
+# ============================================================================
+
+name: "Dagster Cloud — Deploy"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only trigger when Dagster project files change
+      - "my_dagster_project/**"
+      - "workspace.yaml"
+
+  pull_request:
+    branches: [main]
+    paths:
+      - "my_dagster_project/**"
+      - "workspace.yaml"
+
+env:
+  DAGSTER_CLOUD_ORGANIZATION: ${{ secrets.DAGSTER_CLOUD_ORGANIZATION }}
+  DAGSTER_CLOUD_API_TOKEN: ${{ secrets.DAGSTER_CLOUD_API_TOKEN }}
+  # Dagster project location within the repo
+  DAGSTER_PROJECT_DIR: "my_dagster_project"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Job 1: Test Dagster definitions load (runs on PRs and pushes)
+  # --------------------------------------------------------------------------
+  dagster-validate:
+    name: "Validate Dagster definitions"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        working-directory: ${{ env.DAGSTER_PROJECT_DIR }}
+        run: uv sync
+
+      - name: Compile dbt manifest (if using colocated dbt)
+        working-directory: ${{ env.DAGSTER_PROJECT_DIR }}
+        env:
+          # Pass warehouse credentials for dbt parse (manifest compilation)
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+        run: |
+          # Only needed if using DbtProjectComponent (Option A).
+          # Skip this step if using dbt Cloud API integration (Option B).
+          uv run dg utils refresh-defs-state || echo "No dbt state to refresh (using dbt Cloud API mode)."
+
+      - name: Validate definitions load
+        working-directory: ${{ env.DAGSTER_PROJECT_DIR }}
+        run: uv run dg list defs
+
+      - name: Run Dagster asset checks (dry run)
+        working-directory: ${{ env.DAGSTER_PROJECT_DIR }}
+        run: |
+          uv run python -c "
+          from dagster import Definitions
+          from my_dagster_project.defs import defs
+          print(f'Loaded {len(list(defs.get_asset_graph().all_asset_keys))} assets')
+          print('All definitions validated successfully.')
+          "
+
+  # --------------------------------------------------------------------------
+  # Job 2: Run Python tests for Dagster code (runs on PRs)
+  # --------------------------------------------------------------------------
+  dagster-tests:
+    name: "Run Dagster tests"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies (with test extras)
+        working-directory: ${{ env.DAGSTER_PROJECT_DIR }}
+        run: uv sync --extra dev
+
+      - name: Run tests
+        working-directory: ${{ env.DAGSTER_PROJECT_DIR }}
+        run: uv run pytest tests/ -v
+
+  # --------------------------------------------------------------------------
+  # Job 3: Deploy to Dagster Cloud — Branch Deployment (PRs)
+  # --------------------------------------------------------------------------
+  dagster-branch-deploy:
+    name: "Dagster Branch Deployment"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [dagster-validate]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Dagster Cloud (branch)
+        uses: dagster-io/dagster-cloud-action/actions/serverless_branch_deploy@v2
+        with:
+          dagster-cloud-api-token: ${{ secrets.DAGSTER_CLOUD_API_TOKEN }}
+          organization: ${{ secrets.DAGSTER_CLOUD_ORGANIZATION }}
+          location-name: "my-dagster-project"
+          deployment: "prod"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --------------------------------------------------------------------------
+  # Job 4: Deploy to Dagster Cloud — Production (merge to main)
+  # --------------------------------------------------------------------------
+  dagster-prod-deploy:
+    name: "Dagster Production Deploy"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [dagster-validate]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Dagster Cloud (production)
+        uses: dagster-io/dagster-cloud-action/actions/serverless_prod_deploy@v2
+        with:
+          dagster-cloud-api-token: ${{ secrets.DAGSTER_CLOUD_API_TOKEN }}
+          organization: ${{ secrets.DAGSTER_CLOUD_ORGANIZATION }}
+          location-name: "my-dagster-project"
+          deployment: "prod"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

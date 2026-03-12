@@ -1,0 +1,185 @@
+# ============================================================================
+# dbt Cloud Deployment — Triggered ONLY by dbt model/macro/test changes
+# ============================================================================
+# This workflow triggers a dbt Cloud job run when dbt-related files change.
+# It is completely independent of the Dagster deployment workflow.
+#
+# Required GitHub Secrets:
+#   DBT_CLOUD_API_TOKEN    — dbt Cloud API token (Service Account or Personal)
+#   DBT_CLOUD_ACCOUNT_ID   — dbt Cloud account ID
+#   DBT_CLOUD_JOB_ID       — the dbt Cloud Job ID to trigger (CI or Deploy job)
+# ============================================================================
+
+name: "dbt Cloud — Deploy"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only trigger when dbt project files change
+      - "models/**"
+      - "macros/**"
+      - "seeds/**"
+      - "snapshots/**"
+      - "tests/**"
+      - "analyses/**"
+      - "dbt_project.yml"
+      - "packages.yml"
+      - "profiles.yml"
+
+  pull_request:
+    branches: [main]
+    paths:
+      - "models/**"
+      - "macros/**"
+      - "seeds/**"
+      - "snapshots/**"
+      - "tests/**"
+      - "analyses/**"
+      - "dbt_project.yml"
+      - "packages.yml"
+      - "profiles.yml"
+
+env:
+  DBT_CLOUD_API_BASE: "https://cloud.getdbt.com/api/v2"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Job 1: Lint dbt models (runs on PRs)
+  # --------------------------------------------------------------------------
+  dbt-lint:
+    name: "Lint dbt models (sqlfluff)"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install sqlfluff
+        run: pip install sqlfluff sqlfluff-templater-dbt
+
+      - name: Lint changed SQL files
+        run: |
+          # Get list of changed .sql files in this PR
+          CHANGED_SQL=$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- '*.sql')
+          if [ -z "$CHANGED_SQL" ]; then
+            echo "No SQL files changed — skipping lint."
+            exit 0
+          fi
+          echo "Linting: $CHANGED_SQL"
+          echo "$CHANGED_SQL" | xargs sqlfluff lint --dialect snowflake
+
+  # --------------------------------------------------------------------------
+  # Job 2: Trigger dbt Cloud CI job (runs on PRs)
+  # --------------------------------------------------------------------------
+  dbt-cloud-ci:
+    name: "Trigger dbt Cloud CI Job"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Trigger dbt Cloud CI run
+        env:
+          DBT_CLOUD_API_TOKEN: ${{ secrets.DBT_CLOUD_API_TOKEN }}
+          DBT_CLOUD_ACCOUNT_ID: ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
+          DBT_CLOUD_JOB_ID: ${{ secrets.DBT_CLOUD_CI_JOB_ID }}
+        run: |
+          echo "Triggering dbt Cloud CI job $DBT_CLOUD_JOB_ID..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Token $DBT_CLOUD_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "cause": "GitHub PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}",
+              "git_sha": "${{ github.event.pull_request.head.sha }}",
+              "schema_override": "dbt_ci_pr_${{ github.event.pull_request.number }}"
+            }' \
+            "$DBT_CLOUD_API_BASE/accounts/$DBT_CLOUD_ACCOUNT_ID/jobs/$DBT_CLOUD_JOB_ID/run/")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::dbt Cloud API returned HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
+          fi
+
+          RUN_ID=$(echo "$BODY" | jq -r '.data.id')
+          echo "dbt Cloud run started: $RUN_ID"
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+
+      - name: Poll dbt Cloud run until complete
+        env:
+          DBT_CLOUD_API_TOKEN: ${{ secrets.DBT_CLOUD_API_TOKEN }}
+          DBT_CLOUD_ACCOUNT_ID: ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
+        run: |
+          echo "Polling run $RUN_ID for completion..."
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            STATUS_RESPONSE=$(curl -s \
+              -H "Authorization: Token $DBT_CLOUD_API_TOKEN" \
+              "$DBT_CLOUD_API_BASE/accounts/$DBT_CLOUD_ACCOUNT_ID/runs/$RUN_ID/")
+
+            STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.data.status_humanized')
+            echo "  Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS — Status: $STATUS"
+
+            case "$STATUS" in
+              "Success")
+                echo "dbt Cloud run succeeded."
+                exit 0
+                ;;
+              "Error"|"Cancelled")
+                echo "::error::dbt Cloud run finished with status: $STATUS"
+                exit 1
+                ;;
+            esac
+
+            ATTEMPT=$((ATTEMPT+1))
+            sleep 30
+          done
+          echo "::error::Timed out waiting for dbt Cloud run."
+          exit 1
+
+  # --------------------------------------------------------------------------
+  # Job 3: Trigger dbt Cloud deploy job (runs on merge to main)
+  # --------------------------------------------------------------------------
+  dbt-cloud-deploy:
+    name: "Trigger dbt Cloud Deploy Job"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Trigger dbt Cloud production deploy
+        env:
+          DBT_CLOUD_API_TOKEN: ${{ secrets.DBT_CLOUD_API_TOKEN }}
+          DBT_CLOUD_ACCOUNT_ID: ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
+          DBT_CLOUD_JOB_ID: ${{ secrets.DBT_CLOUD_DEPLOY_JOB_ID }}
+        run: |
+          echo "Triggering dbt Cloud production deploy..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X POST \
+            -H "Authorization: Token $DBT_CLOUD_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "cause": "GitHub push to main: ${{ github.sha }}"
+            }' \
+            "$DBT_CLOUD_API_BASE/accounts/$DBT_CLOUD_ACCOUNT_ID/jobs/$DBT_CLOUD_JOB_ID/run/")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::dbt Cloud deploy API returned HTTP $HTTP_CODE"
+            echo "$BODY"
+            exit 1
+          fi
+
+          RUN_ID=$(echo "$BODY" | jq -r '.data.id')
+          echo "dbt Cloud deploy run started: $RUN_ID"
+          echo "View at: https://cloud.getdbt.com/deploy/${{ secrets.DBT_CLOUD_ACCOUNT_ID }}/runs/$RUN_ID"
