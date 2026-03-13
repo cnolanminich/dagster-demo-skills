@@ -22,7 +22,7 @@ Use the `dagster-expert` skill every time.
 
 3. **All integrations must have production implementations built in** — demo mode is an overlay, not a replacement. Production code must always be present and functional.
 
-4. **Verify lineage across integrations** — check that asset dependencies and lineage are correct across all integrations using `dg list defs`. The dependency graph should reflect the intended data flow end-to-end.
+4. **Verify lineage across integrations** — ALWAYS check that asset dependencies and lineage are correct across all integrations using `dg list defs`. The dependency graph should reflect the intended data flow end-to-end.
 
 5. Create Jobs and Schedules
 
