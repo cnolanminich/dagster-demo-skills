@@ -5,6 +5,8 @@ description: Build and modify Dagster demo components using subclassing, demo_mo
 
 # Dagster Demo Skill
 
+Use the `dagster-expert` skill every time.
+
 ## Rules
 
 1. **Always subclass existing components** — never create a custom component from scratch when modifying one that already exists. Find the existing component class and extend it.
