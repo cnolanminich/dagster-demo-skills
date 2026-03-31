@@ -42,7 +42,7 @@ STEP_FUNCTIONS = {s: (lambda s=s: _do_work(s, stage=0)) for s in STEPS}
 class ChainedConfig(dg.Config):
     """Each item goes through process → validate → finalize sequentially."""
 
-    items: list[str]
+    items: list[str] = ["A", "C", "D"]
 
 
 @dg.op(out=dg.DynamicOut())
@@ -110,7 +110,7 @@ class StagedConfig(dg.Config):
     Stage 3: D and F in parallel
     """
 
-    stages: list[list[str]]
+    stages: list[list[str]] = [["A", "C"], ["B"], ["D", "F"]]
 
 
 @dg.op(out=dg.DynamicOut())

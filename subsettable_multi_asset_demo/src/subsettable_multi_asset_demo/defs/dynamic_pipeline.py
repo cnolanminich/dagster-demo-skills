@@ -40,7 +40,7 @@ class DynamicStepConfig(dg.Config):
     Note: execution order is NOT guaranteed — steps run in parallel via .map().
     """
 
-    steps: list[str]
+    steps: list[str] = ["C", "B", "A"]
 
 
 @dg.op(out=dg.DynamicOut())

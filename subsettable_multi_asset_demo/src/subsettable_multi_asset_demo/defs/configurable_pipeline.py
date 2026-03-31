@@ -64,7 +64,7 @@ class StepConfig(dg.Config):
     Only listed steps are materialized; unlisted steps are skipped.
     """
 
-    steps: list[str]
+    steps: list[str] = ["C", "B", "A"]
 
 
 @dg.multi_asset(
