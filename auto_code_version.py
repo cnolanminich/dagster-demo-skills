@@ -148,3 +148,85 @@ def auto_code_version_deep(
         h.update(extra.encode("utf-8"))
 
     return h.hexdigest()[:12]
+
+
+# ---------------------------------------------------------------------------
+# Strategy 4: ZenML-like decorator — zero-config auto-versioned eager asset
+# ---------------------------------------------------------------------------
+
+def cached_asset(
+    fn: Callable | None = None,
+    *,
+    deps: Sequence[Callable] = (),
+    extra: str = "",
+    normalize: bool = True,
+    **asset_kwargs,
+):
+    """Decorator that wraps ``@dg.asset`` with ZenML-like behavior.
+
+    Automatically sets:
+      - ``code_version`` from source hash (normalized AST by default)
+      - ``automation_condition=AutomationCondition.eager()`` for transitive
+        propagation of upstream changes
+
+    Together these two settings make Dagster behave like ZenML's cached steps:
+      - Code changes → asset marked stale → auto-rematerialized
+      - Upstream re-materialized → downstream marked stale → auto-rematerialized
+      - No changes → asset is not touched
+
+    Args:
+        fn: The asset function (when used without parentheses).
+        deps: Helper callables to include in the code hash.
+        extra: Extra salt (package versions, config) for the hash.
+        normalize: If True (default), use AST-normalized hashing to ignore
+            whitespace/comment changes. If False, use raw source hash.
+        **asset_kwargs: Passed through to ``@dg.asset`` (group_name, owners,
+            tags, key_prefix, etc.).  ``code_version`` and
+            ``automation_condition`` are set automatically but can be
+            overridden explicitly.
+
+    Caveats:
+      * Same inspect.getsource limitations as other strategies.
+      * ``eager()`` requires the ``default_automation_condition_sensor`` to
+        be enabled in the Dagster UI under Automation → Sensors.
+      * Transitive propagation depends on ``eager()`` firing on each layer
+        in sequence — there may be a ~30 s evaluation delay per hop.
+
+    Example — bare decorator::
+
+        @cached_asset
+        def features(raw_data):
+            ...
+
+    Example — with options::
+
+        @cached_asset(deps=[preprocess], extra=sklearn.__version__,
+                      group_name="ml")
+        def trained_model(features):
+            ...
+    """
+    import dagster as dg
+
+    def _wrap(func: Callable):
+        # Compute code_version if not explicitly overridden
+        if "code_version" not in asset_kwargs:
+            if deps or extra:
+                version = auto_code_version_deep(func, deps=deps, extra=extra)
+            elif normalize:
+                version = auto_code_version_normalized(func)
+            else:
+                version = auto_code_version(func)
+            asset_kwargs["code_version"] = version
+
+        # Set eager() if not explicitly overridden
+        if "automation_condition" not in asset_kwargs:
+            asset_kwargs["automation_condition"] = (
+                dg.AutomationCondition.eager()
+            )
+
+        return dg.asset(**asset_kwargs)(func)
+
+    # Support both @cached_asset and @cached_asset(...)
+    if fn is not None:
+        return _wrap(fn)
+    return _wrap

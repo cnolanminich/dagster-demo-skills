@@ -322,45 +322,218 @@ Steps 1–3 never enter a run. The run contains only Step 4.
 
 ---
 
-## 7. Recommended Pattern for ML Pipelines
+## 7. Making Dagster Behave Like ZenML: `@cached_asset`
+
+The gap between Dagster and ZenML boils down to two missing defaults:
+1. **No auto code hashing** — you must set `code_version` manually
+2. **No auto propagation** — the Unsynced label doesn't cascade transitively
+
+We can close both gaps with the `@cached_asset` decorator (see `auto_code_version.py`), which combines auto-hashed `code_version` with `AutomationCondition.eager()`:
+
+### Before (manual Dagster)
 
 ```python
 import dagster as dg
 
-@dg.observable_source_asset
-def training_data():
-    """Check if training data has changed."""
-    return dg.DataVersion(compute_data_fingerprint())
+@dg.asset(code_version="1.0.0")  # must remember to bump
+def features(raw_data): ...
 
-@dg.asset(
-    code_version="1.0.0",
-    automation_condition=dg.AutomationCondition.eager(),
-)
-def features(training_data):
-    """Feature engineering — reruns if training data or code changes."""
-    ...
+@dg.asset(code_version="1.0.0")
+def trained_model(features): ...
 
-@dg.asset(
-    code_version="1.0.0",
-    automation_condition=dg.AutomationCondition.eager(),
-)
-def trained_model(features):
-    """Model training — reruns only if features change."""
-    ...
-
-@dg.asset(
-    code_version="1.1.0",  # <-- bumped: only this asset is stale
-    automation_condition=dg.AutomationCondition.eager(),
-)
-def evaluation(trained_model):
-    """Evaluation — code changed, so this auto-rematerializes."""
-    ...
+@dg.asset(code_version="1.1.0")  # forgot to bump? silent staleness
+def evaluation(trained_model): ...
 ```
 
-With `eager()` on all assets:
-- Changing `evaluation`'s `code_version` triggers only `evaluation`.
-- If `training_data` observation detects new data, `features` → `trained_model` → `evaluation` cascade automatically.
-- No unnecessary re-computation of unchanged steps.
+### After (`@cached_asset` — ZenML-like)
+
+```python
+from auto_code_version import cached_asset
+
+@cached_asset
+def features(raw_data):
+    return engineer_features(raw_data)
+
+@cached_asset
+def trained_model(features):
+    return fit_model(features)
+
+@cached_asset
+def evaluation(trained_model):
+    return evaluate(trained_model)
+```
+
+That's it. No manual version strings. Under the hood, each asset gets:
+- `code_version` = AST-normalized hash of the function source
+- `automation_condition` = `AutomationCondition.eager()`
+
+### How This Achieves ZenML-Like Behavior
+
+| ZenML behavior | How `@cached_asset` replicates it |
+|---|---|
+| Code change → cache miss | Source hash changes → `code_version` changes → asset marked Unsynced |
+| Upstream reruns → downstream cache miss | `eager()` fires when any upstream re-materializes → transitive propagation |
+| No change → skip | Code hash unchanged + no upstream update → asset stays synced, not executed |
+| Zero config | Just `@cached_asset` — no version strings to manage |
+
+### The Transitive Propagation Solution
+
+The Unsynced UI label is non-transitive (stops at direct children). But **`eager()` Declarative Automation IS effectively transitive** because it works in a chain:
+
+```
+A changes → A re-materializes
+         → B sees upstream update → eager() fires → B re-materializes
+                                 → C sees upstream update → eager() fires → C re-materializes
+```
+
+Each hop takes ~30 seconds (the automation sensor evaluation interval), so a 4-step pipeline cascades in ~90 seconds. This is slower than ZenML (which resolves within a single run), but the result is the same: only changed assets and their true downstream dependents re-execute.
+
+### Advanced: Adding Helper Deps and Package Versions
+
+```python
+from auto_code_version import cached_asset
+from mylib import preprocess, build_features
+import sklearn
+
+@cached_asset(deps=[preprocess, build_features], extra=sklearn.__version__)
+def trained_model(features):
+    preprocessed = preprocess(features)
+    X = build_features(preprocessed)
+    return sklearn.ensemble.RandomForestClassifier().fit(X, y)
+```
+
+Now changes to `preprocess`, `build_features`, **or** an sklearn upgrade all trigger re-materialization.
+
+### Prerequisites
+
+- **Enable the automation sensor**: Toggle on `default_automation_condition_sensor` in the Dagster UI under **Automation → Sensors**. Without this, `eager()` conditions are never evaluated.
+- **Assets must be in the same code location** for same-run grouping. Cross-location assets cascade via separate runs.
+
+### Remaining Gaps vs ZenML
+
+Even with `@cached_asset`, Dagster still differs from ZenML in these ways:
+
+| Gap | Why it exists | Workaround |
+|-----|---------------|------------|
+| **Parameters not in hash** | Dagster `code_version` is static at import time; ZenML hashes runtime params | Pass config values in the `extra` salt |
+| **~30s delay per hop** | `eager()` evaluates on a sensor tick interval | Acceptable for ML pipelines (training takes minutes/hours anyway) |
+| **`inspect.getsource` limitations** | Can't hash C extensions, dynamic code | Use `extra` for package `__version__` strings |
+| **No artifact-store-aware isolation** | ZenML scopes cache to workspace + artifact store | Dagster's Unsynced is scoped to the instance; use separate deployments for isolation |
+
+---
+
+## 8. When Should an ML Specialist Prefer Each?
+
+### Choose Dagster when:
+
+**You have a production data platform, not just an ML pipeline.**
+
+- Your ML pipeline is part of a larger data ecosystem (ingestion, transformation, analytics, ML) and you want **one orchestrator for everything**.
+- You need **cross-run selective execution** — e.g., "just re-train the model" without re-running the entire pipeline, even ad-hoc from the UI.
+- Your data sources are external (S3 files, databases, APIs) and you want **first-class change detection** via observable source assets + `DataVersion`.
+- You care about **asset-level lineage and observability** — every materialization is tracked, versioned, and visible in the asset graph UI.
+- You want **multiple automation strategies**: some assets on cron, some eager, some manual — mixed within the same graph.
+- Your pipeline has **shared assets** consumed by multiple downstream pipelines (e.g. a feature store used by 5 models). Dagster's asset graph handles fan-out naturally; ZenML's pipeline-scoped caching doesn't.
+- You're already using Dagster for data engineering and want to **add ML without a second orchestrator**.
+
+**Dagster's sweet spot:** Platform teams running mixed data + ML workloads where assets are the primary abstraction and selective execution across the entire graph matters more than zero-config caching within a single pipeline.
+
+### Choose ZenML when:
+
+**You are an ML team that wants pipeline caching to "just work."**
+
+- Your primary concern is **experiment iteration speed** — change code, re-run, and only wait for what actually changed.
+- You want **zero configuration** — no version strings, no decorators, no automation conditions. Caching is on by default and covers code + params + inputs automatically.
+- Your pipeline is a **linear ML workflow** (preprocess → train → evaluate → deploy) and you don't need cross-pipeline asset sharing.
+- You want **infrastructure flexibility** — ZenML's stack abstraction lets you swap orchestrators (Airflow, Kubeflow, Vertex AI, local) while keeping the same caching behavior.
+- You value **automatic parameter-aware caching** — hyperparameter changes invalidate only the affected step and downstream, without manual version management.
+- Your team is **ML-first** and doesn't want to learn data-engineering concepts (asset graphs, declarative automation, sensors).
+
+**ZenML's sweet spot:** ML teams iterating on experiments where the pipeline structure is relatively stable and automatic, comprehensive caching is more valuable than fine-grained orchestration control.
+
+### Decision Matrix
+
+| Scenario | Recommendation |
+|----------|---------------|
+| "We have a data platform and ML is one workload" | **Dagster** |
+| "We just need ML pipelines with fast iteration" | **ZenML** |
+| "We need to re-run one model without touching the rest" | **Dagster** (`stale_assets_only` or UI selection) |
+| "We want caching without configuring anything" | **ZenML** |
+| "Our data sources are external systems (S3, DBs, APIs)" | **Dagster** (observable source assets) |
+| "We run on Kubeflow/Vertex and want portable pipelines" | **ZenML** (stack abstraction) |
+| "We share features across multiple models" | **Dagster** (asset graph fan-out) |
+| "We frequently change hyperparameters" | **ZenML** (params in cache key) |
+| "We need mixed scheduling (some cron, some event-driven)" | **Dagster** (declarative automation) |
+| "We want the simplest possible ML pipeline caching" | **ZenML**, or **Dagster with `@cached_asset`** |
+
+### Can You Use Both?
+
+Yes. Some teams use ZenML for ML experimentation (fast iteration with automatic caching) and Dagster for production orchestration (scheduling, monitoring, data platform integration). ZenML pipelines can write outputs that Dagster observes via `@observable_source_asset`, bridging the two systems. This is a pragmatic choice when your ML and data engineering teams have different needs.
+
+---
+
+## 9. Complete Example: ZenML-Like ML Pipeline in Dagster
+
+```python
+import dagster as dg
+from auto_code_version import cached_asset
+
+# ── External data source ──────────────────────────────────────────
+@dg.observable_source_asset
+def training_data():
+    """Detect when the training CSV changes."""
+    import hashlib
+    content = open("/data/training.csv", "rb").read()
+    return dg.DataVersion(hashlib.sha256(content).hexdigest()[:16])
+
+# ── Pipeline steps — all auto-versioned + eager ───────────────────
+@cached_asset
+def features(training_data):
+    """Feature engineering. Auto-rematerializes if training data or
+    this function's code changes."""
+    df = load(training_data)
+    return engineer_features(df)
+
+@cached_asset
+def trained_model(features):
+    """Model training. Only re-runs if features change."""
+    return fit_model(features)
+
+@cached_asset
+def evaluation(trained_model):
+    """Evaluation. Only re-runs if the model or this code changes."""
+    metrics = evaluate(trained_model)
+    return dg.MaterializeResult(
+        metadata={"accuracy": metrics["accuracy"]},
+    )
+
+@cached_asset
+def deployed_model(trained_model, evaluation):
+    """Deploy. Only re-runs if model or evaluation changes."""
+    deploy_to_endpoint(trained_model)
+
+# ── Scheduled observation (detect upstream data changes) ──────────
+observe_job = dg.define_asset_job(
+    "observe_training_data",
+    selection=dg.AssetSelection.assets(training_data),
+)
+
+@dg.schedule(cron_schedule="*/30 * * * *", job=observe_job)
+def observe_schedule():
+    return dg.RunRequest()
+
+# ── Definitions ───────────────────────────────────────────────────
+defs = dg.Definitions(
+    assets=[training_data, features, trained_model, evaluation, deployed_model],
+    schedules=[observe_schedule],
+)
+```
+
+**Behavior:**
+- Every 30 minutes, the observation schedule checks if `training_data` has changed.
+- If it has → `features` fires (eager) → `trained_model` fires → `evaluation` fires → `deployed_model` fires. Full cascade, ~2 min of automation delay.
+- If you edit `evaluation`'s code and redeploy → only `evaluation` and `deployed_model` re-run. `features` and `trained_model` are untouched.
+- If nothing changes → nothing runs. Zero wasted compute.
 
 ---
 
