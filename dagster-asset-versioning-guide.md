@@ -18,29 +18,82 @@ There is an [open feature request (dagster-io/dagster#15242)](https://github.com
 - False negatives: a real code change in an imported utility wouldn't bump the version.
 - False positives: a cosmetic change (whitespace, comment) would invalidate all downstream assets.
 
-### DIY Auto-Hashing (Use With Caution)
+### DIY Auto-Hashing — Three Strategies (see `auto_code_version.py`)
 
-You can build your own, but understand the limitations:
+We provide a utility module `auto_code_version.py` with three strategies of increasing coverage. Each trades off convenience against false-positive/false-negative risk.
+
+#### Strategy 1: Shallow hash (`auto_code_version`)
+
+Hashes raw function source via `inspect.getsource()` — the simplest approach.
 
 ```python
-import hashlib, inspect
+from auto_code_version import auto_code_version
 
-def auto_code_version(fn):
-    """Derive code_version from function source hash. Only captures the
-    function body itself — NOT imports, called helpers, or package versions."""
-    return hashlib.md5(inspect.getsource(fn).encode()).hexdigest()[:8]
+def _train_impl(features):
+    model = fit(features)
+    return model
+
+@dg.asset(code_version=auto_code_version(_train_impl))
+def trained_model(features):
+    return _train_impl(features)
 ```
 
-**What triggers a change with this approach:**
-- Any edit to the function body (logic, constants, comments, whitespace)
+| Triggers a change | Does NOT trigger a change |
+|---|---|
+| Any edit to the function body | Changes to imported helpers (`from mylib import preprocess`) |
+| Whitespace / comment changes (false positive) | Package version upgrades (`sklearn 1.4→1.5`) |
+| Renamed variables | Environment variable / config changes |
+| | External schema changes |
 
-**What does NOT trigger a change:**
-- Changes to imported modules or helper functions called by the asset
-- Dependency/package version upgrades
-- Changes to configuration or environment variables
-- Changes to data schemas in external systems
+#### Strategy 2: Normalized hash (`auto_code_version_normalized`)
 
-**Bottom line:** Manual `code_version` strings (e.g. semver or date-based) are the recommended and most reliable approach.
+Parses the function into an AST, strips docstrings and whitespace, then hashes the canonical tree. Avoids false positives from formatting-only changes.
+
+```python
+from auto_code_version import auto_code_version_normalized
+
+@dg.asset(code_version=auto_code_version_normalized(my_func))
+def my_asset(): ...
+```
+
+| Triggers a change | Does NOT trigger a change |
+|---|---|
+| Logic changes, new/removed statements | Whitespace, comment, docstring edits |
+| Renamed variables | Changes to imported helpers |
+| Changed constants/literals | Package upgrades |
+
+#### Strategy 3: Deep hash (`auto_code_version_deep`)
+
+Hashes the function **plus** explicitly listed dependency callables and an arbitrary salt string. This is the closest analog to ZenML's full cache key.
+
+```python
+from auto_code_version import auto_code_version_deep
+from mylib import preprocess, build_features
+import sklearn
+
+@dg.asset(
+    code_version=auto_code_version_deep(
+        _train_impl,
+        deps=[preprocess, build_features],
+        extra=sklearn.__version__,
+    )
+)
+def trained_model(features):
+    return _train_impl(features)
+```
+
+| Triggers a change | Does NOT trigger a change |
+|---|---|
+| Edit to main function body | Unlisted helper changes (false negative) |
+| Edit to any listed `deps` function | C-extension functions (falls back to `repr()`) |
+| Change in `extra` string (e.g. package version) | Env vars, config, external schemas |
+
+#### Caveat Summary For All Strategies
+
+- **Evaluated at import time** — the hash is computed when the module loads, not at materialization time.
+- **`inspect.getsource()` requires source files** — won't work on functions defined in a REPL, compiled `.pyc`-only distributions, or C extensions.
+- **Dynamic functions** (e.g. generated inside a factory loop) may produce unstable hashes across interpreter restarts.
+- **For production**, Dagster maintainers recommend manual `code_version` strings (semver or date-based) as the most reliable approach — see [dagster-io/dagster#15242](https://github.com/dagster-io/dagster/issues/15242) for the full rationale.
 
 ---
 
@@ -190,25 +243,82 @@ def ml_schedule():
 
 ---
 
-## 6. Comparison: Dagster vs ZenML Caching
+## 6. Deep Comparison: Dagster vs ZenML Caching
+
+### How ZenML's Cache Key Works (internals)
+
+ZenML computes an **MD5 hash** that incorporates all of the following:
+
+| Component | What it captures |
+|-----------|-----------------|
+| Workspace ID | Isolates caches per workspace/tenant |
+| Artifact store ID + path | Ties the cache to a specific storage backend |
+| **Step source code** | `inspect.getsource()` of the `@step` function |
+| Step parameters | All parameters passed to the step |
+| Input artifact names + IDs | The exact artifact versions consumed |
+| Output artifact names + source codes | Output materializer definitions |
+| Output materializer source codes | How outputs will be serialized |
+| Custom cache key (optional) | Artifact-store-specific salt (e.g. `LocalArtifactStore` includes client ID) |
+
+If this composite hash matches a previous step run, ZenML **skips execution entirely** and reuses the cached output artifacts. This happens transparently within a pipeline run — the step appears as "cached" in the run DAG.
+
+**Key ZenML behaviors:**
+- Caching is **on by default** (`enable_cache=True`)
+- Every step is checked independently — if Step 3 is cached but Step 4 is not, only Step 4 runs
+- The source code hash means **any edit to the function body** (including whitespace) invalidates the cache
+- External artifacts currently **invalidate caching** for the step and all downstream steps (value-based caching is being added)
+
+### Side-by-Side Comparison
 
 | Aspect | ZenML | Dagster |
 |--------|-------|---------|
-| **Version detection** | Automatic hash of inputs + code | Manual `code_version` + auto `data_version` |
-| **Granularity** | Step-level within a pipeline run | Asset-level across the entire graph |
-| **Skip mechanism** | Cached output returned mid-run | Non-stale assets excluded from run entirely |
-| **Trigger** | Automatic on every run | `stale_assets_only`, Declarative Automation, or manual "Materialize Unsynced" |
-| **External data** | Materializer-level caching | Observable source assets with `DataVersion` |
-| **Propagation** | Full transitive | Non-transitive (direct children only, as of v1.8.0) |
-| **Auto code hashing** | Built-in | Not built-in (DIY possible but not recommended) |
+| **Code change detection** | Automatic `inspect.getsource()` hash, built-in | Manual `code_version` string (DIY auto-hash possible via `auto_code_version.py`) |
+| **Input change detection** | Automatic — input artifact IDs in the hash | Automatic — `data_version` = hash(`code_version` + input `data_version`s) |
+| **Parameter change detection** | Automatic — step params in the hash | Manual — fold into `code_version` or use `extra` salt in `auto_code_version_deep` |
+| **Cache key scope** | Workspace + artifact store + code + inputs + outputs | `code_version` + upstream `data_version`s |
+| **Granularity** | Step-level within a single pipeline run | Asset-level across the entire graph and across runs |
+| **Skip mechanism** | Step skipped mid-run, cached output artifact returned | Non-stale assets never selected for execution |
+| **When is the check done?** | At the start of each step execution | Before the run is even launched (`stale_assets_only`) or continuously (Declarative Automation) |
+| **Cross-run awareness** | Yes — cache persists across runs in the artifact store | Yes — Unsynced status persists in the Dagster instance |
+| **External data sources** | External artifacts invalidate caching (known limitation) | Observable source assets with `DataVersion` — first-class support |
+| **Staleness propagation** | Transitive — if Step 2 reruns, Step 3 cache is invalidated via new input artifact IDs | Non-transitive (v1.8.0+) — only direct children show Unsynced |
+| **Default behavior** | Caching on, zero config | No caching unless `code_version` is set |
+| **Disable caching** | `@step(enable_cache=False)` | Omit `code_version` (or don't use `stale_assets_only`) |
 
-### Key Dagster Advantage
+### What ZenML Gets Right That Dagster Doesn't (Out of the Box)
 
-Dagster's approach is **graph-aware at the orchestration level**, not just within a single run. The Unsynced status and `stale_assets_only` work across independent runs and schedules — you don't need to re-run the entire pipeline to get selective execution.
+1. **Zero-config code change detection** — ZenML hashes step source automatically. In Dagster, you must manually set/bump `code_version` or wire up `auto_code_version.py`.
+2. **Parameter-aware caching** — ZenML includes step parameters in the hash. Dagster's `code_version` is static at definition time and doesn't incorporate runtime config.
+3. **Transitive invalidation** — When ZenML re-runs Step 2 with a new output artifact, Step 3's cache key changes automatically (different input artifact ID). Dagster's Unsynced label stops at direct children.
 
-### Key Dagster Limitation
+### What Dagster Gets Right That ZenML Doesn't
 
-The non-transitive Unsynced propagation means that after re-materializing Step 4, you may need to check again whether deeper downstream assets need updating. In practice for linear ML pipelines this is rarely an issue, but for wide DAGs it requires iterative materialization or Declarative Automation with `eager()` to propagate changes automatically.
+1. **Graph-level orchestration** — Dagster can skip assets *before a run starts* (`stale_assets_only`, "Materialize Unsynced"). ZenML must start the pipeline run and check each step sequentially.
+2. **External data as first-class citizens** — Observable source assets with `DataVersion` cleanly detect upstream data changes. ZenML's external artifacts currently break caching entirely.
+3. **Selective execution across runs** — You can materialize a single stale asset without re-running the entire pipeline. ZenML ties caching to pipeline runs.
+4. **Declarative Automation** — `AutomationCondition.eager()` propagates changes automatically without any pipeline definition. ZenML requires explicit pipeline execution.
+5. **Explicit over implicit** — Manual `code_version` avoids false positives from cosmetic edits and false negatives from helper changes. The trade-off is more work for the developer.
+
+### Scenario: "Only Step 4 code changed" — Both Systems
+
+**ZenML:**
+```
+Run pipeline →
+  Step 1: cache HIT (same code + same inputs) → skip, reuse output
+  Step 2: cache HIT → skip, reuse output
+  Step 3: cache HIT → skip, reuse output
+  Step 4: cache MISS (source code hash changed) → execute
+```
+All four steps are *attempted* but three are skipped via cache lookup. The pipeline run still appears with all four steps, three marked "cached."
+
+**Dagster (with `stale_assets_only`):**
+```
+Schedule fires →
+  Dagster checks staleness: only Step 4 is Unsynced
+  Run is launched with ONLY Step 4 in the selection
+  Steps 1–3 are not part of the run at all
+```
+Steps 1–3 never enter a run. The run contains only Step 4.
 
 ---
 
@@ -256,6 +366,7 @@ With `eager()` on all assets:
 
 ## Sources
 
+### Dagster
 - [Asset Versioning and Caching — Dagster Docs](https://docs.dagster.io/guides/build/assets/asset-versioning-and-caching)
 - [Unsynced Status Propagation Discussion (dagster-io/dagster#25248)](https://github.com/dagster-io/dagster/discussions/25248)
 - [Auto Code Versioning Feature Request (dagster-io/dagster#15242)](https://github.com/dagster-io/dagster/issues/15242)
@@ -263,3 +374,10 @@ With `eager()` on all assets:
 - [Support Rematerialization of Stale Assets in Schedules (dagster-io/dagster#10726)](https://github.com/dagster-io/dagster/issues/10726)
 - [Partitioned Assets and code_version (dagster-io/dagster#22704)](https://github.com/dagster-io/dagster/issues/22704)
 - [Declarative Scheduling Blog Post](https://dagster.io/blog/declarative-scheduling)
+
+### ZenML
+- [ZenML Caching — Control Caching Behavior](https://docs.zenml.io/how-to/build-pipelines/control-caching-behavior)
+- [ZenML Advanced Step/Pipeline Features](https://docs.zenml.io/concepts/steps_and_pipelines/advanced_features)
+- [ZenML Artifacts Concepts](https://docs.zenml.io/concepts/artifacts)
+- [Why You Should Be Using Caching in ML Pipelines — ZenML Blog](https://www.zenml.io/blog/why-you-should-be-using-caching-in-your-machine-learning-pipelines)
+- [ZenML Steps SDK Reference (cache key internals)](https://sdkdocs.zenml.io/0.65.0/core_code_docs/core-steps/)
