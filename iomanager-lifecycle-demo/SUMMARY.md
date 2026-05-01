@@ -118,7 +118,84 @@ log shows `RESOURCE_INIT_STARTED [io_manager, secondary_io]` and we
 observe two distinct session ids. So if a step touches both IOManagers,
 it sees two sessions and you've lost atomicity within the step.
 
-### 8. Workaround: legacy `required_resource_keys` does share
+### 8. You CAN patch the modern API: have the resource dedupe itself
+
+`tests/test_self_deduping_resource.py`
+
+Yes — you can keep the Pythonic `ConfigurableIOManager` + nested
+`ConfigurableResource` ergonomics and still get one session shared across
+all nestings. The patch is a process-local cache inside the resource's
+own `yield_for_execution`:
+
+```python
+_PROCESS_CACHE: dict[tuple[str, str], FakeSession] = {}
+_REFCOUNT: dict[tuple[str, str], int] = {}
+
+class SharedSessionResource(dg.ConfigurableResource):
+    cache_key: str = "default"
+
+    @contextmanager
+    def yield_for_execution(self, context):
+        key = (context.run_id, self.cache_key)
+        if key in _PROCESS_CACHE:           # second+ nesting: cache hit
+            _REFCOUNT[key] += 1
+            self._session = _PROCESS_CACHE[key]
+            try: yield self
+            finally: _REFCOUNT[key] -= 1
+            return
+
+        session = FakeSession()              # first nesting: own it
+        _PROCESS_CACHE[key] = session
+        _REFCOUNT[key] = 1
+        self._session = session
+        try:
+            yield self
+            session.commit()
+        except BaseException:
+            session.rollback(); raise
+        finally:
+            session.close()
+            _REFCOUNT[key] -= 1
+            if _REFCOUNT[key] == 0:
+                del _PROCESS_CACHE[key]; del _REFCOUNT[key]
+```
+
+Properties:
+
+* **Process-local cache.** Under multiprocess each worker has its own
+  `_PROCESS_CACHE`, so cross-step sessions never leak. The tests verify
+  this: within a step (one PID) all IOManagers share one session id;
+  across steps (different PIDs) sessions are distinct.
+* **Refcount-based cleanup.** Dagster still calls `yield_for_execution`
+  twice (once per nested instance). The first call creates the session
+  and owns its close; subsequent calls are a no-op cache hit. Works
+  regardless of teardown order.
+* **Pluralisable via `cache_key`.** Different cache keys give different
+  pools — useful if you need a per-database session, or want to mark a
+  resource as "do not share".
+
+What this still does NOT fix (same as before):
+
+* **Step-failure rollback.** The exception still does not propagate into
+  the generator, so the commit branch runs even when the run fails. You
+  need an op `failure_hook` (or a wrapper inside the op body) for
+  per-step rollback semantics.
+
+So the trade-off vs. the function-style API:
+
+| | Function-style + `required_resource_keys` | Self-deduping `ConfigurableResource` |
+| --- | --- | --- |
+| Sharing across IOManagers | ✅ via key registry | ✅ via process-local cache |
+| Pydantic config on the IOManager | ❌ | ✅ |
+| Static types on resource access | ❌ (`Any`) | ✅ (typed field) |
+| Module-level mutable state | ❌ | ✅ (one private dict per resource type) |
+| Has a moving part you need to maintain | ❌ | ✅ (the cache + refcount) |
+
+If you can stomach the small chunk of process-local state, the
+self-deduping resource gets you the modern ergonomics with the same
+sharing guarantees.
+
+### 9. Fallback: legacy `required_resource_keys` does share
 
 `tests/test_legacy_required_resource_keys.py::test_legacy_required_resource_keys_shares_session`
 
@@ -157,8 +234,9 @@ the supported "share one resource across multiple IOManagers" path today.
 | Does a multiprocess run init resources once or per step? | **Per step**, via the process boundary. Sessions cannot leak across workers because they're separate processes. |
 | Is the default executor multiprocess? | **Yes**, both for `dagster dev` and prod jobs. |
 | Will a `try/except`-based `@contextmanager` resource roll back on step failure? | **No** — Dagster doesn't throw the step exception into the generator. It exits cleanly via the commit path. |
-| If I share one Python `ConfigurableResource()` between two `ConfigurableIOManager`s, do they share the underlying session? | **No.** Each IOManager nests its own copy and Dagster initialises each one separately. |
-| What pattern does share? | Legacy `@io_manager(required_resource_keys={"session_resource"})` + a single resource registered by key. Each IOManager pulls it from `context.resources`. |
+| If I share one Python `ConfigurableResource()` between two `ConfigurableIOManager`s, do they share the underlying session? | **No** by default. Each IOManager nests its own copy and Dagster initialises each one separately. `ResourceDependency[T]` does *not* change this — it's just a typing hint. |
+| Can I patch the modern API to share? | **Yes** — make the resource self-dedupe via a process-local cache in `yield_for_execution`. Test `test_self_deduping_resource.py` shows it. |
+| Is there a non-patched fallback that shares? | Function-style `@io_manager(required_resource_keys={"session_resource"})` + a single resource registered by key. Each IOManager pulls it from `context.resources`. Not deprecated, just less ergonomic. |
 
 ## Practical recommendation for your ORM IOManager
 

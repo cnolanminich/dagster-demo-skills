@@ -72,3 +72,29 @@ def two_iomanagers_one_session_job_multiprocess() -> dg.JobDefinition:
         multiprocess=True,
     )
     return defs.resolve_job_def("two_iomanagers_job")
+
+
+def self_deduping_two_iomanagers_job_multiprocess() -> dg.JobDefinition:
+    """Same shape as two_iomanagers_one_session_job_multiprocess, but using
+    the SharedSessionResource patch from tests/test_self_deduping_resource.py
+    so that nestings in the same worker share one session.
+    """
+    from tests.test_self_deduping_resource import (
+        SharedIOManager,
+        SharedSessionResource,
+    )
+
+    shared = SharedSessionResource()
+    defs = _build_defs(
+        assets=[foo, bar_via_secondary, baz],
+        resources={
+            "session_resource": shared,
+            "io_manager": SharedIOManager(name="primary", session_resource=shared),
+            "secondary_io": SharedIOManager(
+                name="secondary", session_resource=shared
+            ),
+        },
+        job_name="self_deduping_two_iomanagers_job",
+        multiprocess=True,
+    )
+    return defs.resolve_job_def("self_deduping_two_iomanagers_job")
