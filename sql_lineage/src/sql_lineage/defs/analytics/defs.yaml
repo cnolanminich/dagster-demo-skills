@@ -1,0 +1,14 @@
+type: sql_lineage.components.templated_sql_component.TemplatedSqlComponent
+
+attributes:
+  # Directory of templated .sql files, relative to this defs.yaml.
+  sql_dir: models
+  # sqlglot dialect used to parse dependencies and run the SQL.
+  dialect: duckdb
+  group_name: analytics
+  # Jinja2 variables injected into every .sql template before parsing.
+  template_vars:
+    source_schema: raw
+  # Run end-to-end locally against an in-memory DuckDB with mock source data.
+  # Set to false and point `database_path` at a real DuckDB file for production.
+  demo_mode: true
