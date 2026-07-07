@@ -1,0 +1,123 @@
+# Dagster+ Hybrid deploy using Podman instead of Docker
+#
+# This workflow deploys a code location to a Dagster+ HYBRID deployment whose
+# agents use Podman as their container runtime instead of Docker.
+#
+# The Dagster+ hybrid CI/CD flow has three logical steps:
+#   1. `dagster-cloud ci init`  — figure out which code locations changed and
+#      whether this is a branch deployment (PR) or a full deployment (main).
+#   2. Build + push the code location image to your registry. The generated
+#      workflow normally does this with Docker; here we do it with **Podman**,
+#      then hand the resulting image tag back to the CLI via
+#      `dagster-cloud ci set-build-output`.
+#   3. `dagster-cloud ci deploy` — tell Dagster+ to point the code location at
+#      the freshly pushed image. Your hybrid agent then launches code servers
+#      and runs from that image using Podman.
+#
+# Why Podman here: since the hybrid agent runs containers with Podman (see
+# ./PODMAN-HYBRID.md for the agent-side socket configuration), building the
+# same images with Podman in CI keeps the whole toolchain daemonless and
+# rootless-friendly. Podman is CLI-compatible with Docker, so the only real
+# change from the stock Dagster+ workflow is swapping `docker` for `podman`.
+#
+# Required repository secrets:
+#   DAGSTER_CLOUD_API_TOKEN  — from `dg plus create ci-api-token`
+#   REGISTRY_USERNAME        — container registry username
+#   REGISTRY_PASSWORD        — container registry password / token
+#
+# Required repository variables (Settings > Variables):
+#   DAGSTER_CLOUD_ORGANIZATION — your Dagster+ org name
+#   DAGSTER_CLOUD_URL          — e.g. https://<org>.dagster.cloud
+#   IMAGE_REGISTRY             — e.g. ghcr.io/my-org/my-code-location
+#   LOCATION_NAME              — the code location name in dagster_cloud.yaml
+
+name: Dagster+ Hybrid Deploy (Podman)
+
+on:
+  push:
+    branches: [main]
+  # PRs create/refresh a Dagster+ branch deployment.
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
+
+concurrency:
+  # One deploy per branch at a time; newer pushes cancel in-flight runs.
+  group: dagster-plus-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DAGSTER_CLOUD_ORGANIZATION: ${{ vars.DAGSTER_CLOUD_ORGANIZATION }}
+  DAGSTER_CLOUD_URL: ${{ vars.DAGSTER_CLOUD_URL }}
+  DAGSTER_CLOUD_API_TOKEN: ${{ secrets.DAGSTER_CLOUD_API_TOKEN }}
+  IMAGE_REGISTRY: ${{ vars.IMAGE_REGISTRY }}
+  LOCATION_NAME: ${{ vars.LOCATION_NAME }}
+  # Immutable, traceable image tag per commit.
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  dagster-plus-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install the Dagster Cloud CLI
+        # The `dagster-cloud` package provides the `dagster-cloud ci` commands
+        # used to drive hybrid deployments.
+        run: pip install dagster-cloud
+
+      - name: Confirm Podman is available
+        # Podman ships preinstalled on ubuntu-latest runners (daemonless,
+        # rootless). No Docker daemon is used anywhere in this workflow.
+        run: podman version
+
+      # Initialize the deploy session. This inspects dagster_cloud.yaml (or
+      # build.yaml + pyproject.toml) and the git event to decide the target
+      # deployment (full vs. branch). State is written to ./.dagster-cloud-ci.
+      - name: Initialize Dagster+ deploy
+        run: |
+          dagster-cloud ci init \
+            --project-dir=. \
+            --deployment=prod   # branch deployments are auto-detected on PRs
+
+      # --- Podman image build & push (replaces the Docker build step) ---
+
+      - name: Log in to the container registry with Podman
+        # `podman login` takes the same flags as `docker login`.
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" \
+            | podman login "${IMAGE_REGISTRY%%/*}" \
+                -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Build the code location image with Podman
+        # `--format docker` writes a Docker v2 schema image for broad registry
+        # and agent compatibility. Builds the Dockerfile in the repo root.
+        run: |
+          podman build --format docker \
+            -t "${IMAGE_REGISTRY}:${IMAGE_TAG}" \
+            .
+
+      - name: Push the image with Podman
+        run: podman push "${IMAGE_REGISTRY}:${IMAGE_TAG}"
+
+      # Hand the pushed image back to the CLI so the deploy points the code
+      # location at exactly this tag (instead of letting the CLI build it).
+      - name: Register the built image with Dagster+
+        run: |
+          dagster-cloud ci set-build-output \
+            --location-name="${LOCATION_NAME}" \
+            --image-tag="${IMAGE_TAG}"
+
+      # --- Deploy ---
+
+      # Updates the code location in Dagster+. On PRs this targets the branch
+      # deployment; on main it targets the full deployment. Your Podman-based
+      # hybrid agent then spins up code servers/runs from the pushed image.
+      - name: Deploy to Dagster+
+        run: dagster-cloud ci deploy
